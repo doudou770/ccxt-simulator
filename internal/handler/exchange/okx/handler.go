@@ -2,6 +2,7 @@ package okx
 
 import (
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/ccxt-simulator/internal/middleware"
@@ -12,16 +13,48 @@ import (
 
 // Handler handles OKX-compatible API requests
 type Handler struct {
-	tradingService *service.TradingService
-	priceService   *service.PriceService
+	tradingService      *service.TradingService
+	priceService        *service.PriceService
+	exchangeInfoService *service.ExchangeInfoService
 }
 
 // NewHandler creates a new OKX handler
-func NewHandler(tradingService *service.TradingService, priceService *service.PriceService) *Handler {
+func NewHandler(tradingService *service.TradingService, priceService *service.PriceService, exchangeInfoService *service.ExchangeInfoService) *Handler {
 	return &Handler{
-		tradingService: tradingService,
-		priceService:   priceService,
+		tradingService:      tradingService,
+		priceService:        priceService,
+		exchangeInfoService: exchangeInfoService,
 	}
+}
+
+// GetTime handles GET /api/v5/public/time
+func (h *Handler) GetTime(c *gin.Context) {
+	c.JSON(200, gin.H{
+		"code": "0",
+		"msg":  "",
+		"data": []gin.H{
+			{
+				"ts": strconv.FormatInt(time.Now().UnixMilli(), 10),
+			},
+		},
+	})
+}
+
+// GetInstruments handles GET /api/v5/public/instruments
+func (h *Handler) GetInstruments(c *gin.Context) {
+	if h.exchangeInfoService != nil {
+		data, err := h.exchangeInfoService.GetExchangeInfo("okx")
+		if err == nil && data != nil {
+			c.JSON(200, data)
+			return
+		}
+	}
+
+	c.JSON(200, gin.H{
+		"code": "0",
+		"msg":  "",
+		"data": []gin.H{},
+	})
 }
 
 // GetBalance handles GET /api/v5/account/balance
@@ -145,12 +178,10 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 		return
 	}
 
-	// Convert OKX symbol to standard
 	symbol := convertFromOKXSymbol(req.InstId)
 	quantity, _ := strconv.ParseFloat(req.Sz, 64)
 	price, _ := strconv.ParseFloat(req.Px, 64)
 
-	// Map position side
 	var posSide models.PositionSide
 	if req.PosSide == "long" {
 		posSide = models.PositionSideLong
@@ -158,7 +189,6 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 		posSide = models.PositionSideShort
 	}
 
-	// Map order type
 	var orderType models.OrderType
 	switch req.OrdType {
 	case "limit":
@@ -213,6 +243,156 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 	})
 }
 
+// CreateAlgoOrder handles POST /api/v5/trade/order-algo (SL/TP orders)
+func (h *Handler) CreateAlgoOrder(c *gin.Context) {
+	account := middleware.GetAccount(c)
+	if account == nil {
+		h.errorResponse(c, "50111", "API key is invalid")
+		return
+	}
+
+	var req struct {
+		InstId      string `json:"instId"`
+		TdMode      string `json:"tdMode"`
+		Side        string `json:"side"`
+		PosSide     string `json:"posSide"`
+		OrdType     string `json:"ordType"` // conditional
+		Sz          string `json:"sz"`
+		TpTriggerPx string `json:"tpTriggerPx"`
+		TpOrdPx     string `json:"tpOrdPx"`
+		SlTriggerPx string `json:"slTriggerPx"`
+		SlOrdPx     string `json:"slOrdPx"`
+		ReduceOnly  string `json:"reduceOnly"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.errorResponse(c, "50000", err.Error())
+		return
+	}
+
+	symbol := convertFromOKXSymbol(req.InstId)
+	quantity, _ := strconv.ParseFloat(req.Sz, 64)
+
+	var posSide models.PositionSide
+	if req.PosSide == "long" {
+		posSide = models.PositionSideLong
+	} else {
+		posSide = models.PositionSideShort
+	}
+
+	var orderType models.OrderType
+	var triggerPrice float64
+
+	if req.SlTriggerPx != "" {
+		orderType = models.OrderTypeStopMarket
+		triggerPrice, _ = strconv.ParseFloat(req.SlTriggerPx, 64)
+	} else if req.TpTriggerPx != "" {
+		orderType = models.OrderTypeTakeProfit
+		triggerPrice, _ = strconv.ParseFloat(req.TpTriggerPx, 64)
+	}
+
+	closeReq := &service.ClosePositionRequest{
+		AccountID:  account.ID,
+		Symbol:     symbol,
+		Side:       posSide,
+		Quantity:   &quantity,
+		OrderType:  orderType,
+		StopPrice:  triggerPrice,
+		ReduceOnly: true,
+	}
+
+	order, _, err := h.tradingService.ClosePosition(closeReq, models.ExchangeOKX)
+	if err != nil {
+		h.handleError(c, err)
+		return
+	}
+
+	c.JSON(200, gin.H{
+		"code": "0",
+		"msg":  "",
+		"data": []gin.H{
+			{
+				"algoId":      strconv.Itoa(int(order.ID)),
+				"algoClOrdId": order.ClientOrderID,
+				"sCode":       "0",
+				"sMsg":        "",
+			},
+		},
+	})
+}
+
+// GetOpenAlgoOrders handles GET /api/v5/trade/orders-algo-pending
+func (h *Handler) GetOpenAlgoOrders(c *gin.Context) {
+	account := middleware.GetAccount(c)
+	if account == nil {
+		h.errorResponse(c, "50111", "API key is invalid")
+		return
+	}
+
+	instId := c.Query("instId")
+	symbol := ""
+	if instId != "" {
+		symbol = convertFromOKXSymbol(instId)
+	}
+
+	orders, _ := h.tradingService.GetOpenAlgoOrders(account.ID, symbol)
+
+	data := make([]gin.H, 0)
+	for _, order := range orders {
+		data = append(data, gin.H{
+			"algoId":      strconv.Itoa(int(order.ID)),
+			"algoClOrdId": order.ClientOrderID,
+			"instId":      convertToOKXSymbol(order.Symbol),
+			"instType":    "SWAP",
+			"ordType":     "conditional",
+			"sz":          strconv.FormatFloat(order.Quantity, 'f', 8, 64),
+			"triggerPx":   strconv.FormatFloat(order.StopPrice, 'f', 8, 64),
+			"state":       "live",
+			"cTime":       strconv.FormatInt(order.CreatedAt.UnixMilli(), 10),
+		})
+	}
+
+	c.JSON(200, gin.H{
+		"code": "0",
+		"msg":  "",
+		"data": data,
+	})
+}
+
+// CancelAlgoOrder handles POST /api/v5/trade/cancel-algos
+func (h *Handler) CancelAlgoOrder(c *gin.Context) {
+	account := middleware.GetAccount(c)
+	if account == nil {
+		h.errorResponse(c, "50111", "API key is invalid")
+		return
+	}
+
+	var req []struct {
+		AlgoId string `json:"algoId"`
+		InstId string `json:"instId"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.errorResponse(c, "50000", err.Error())
+		return
+	}
+
+	data := make([]gin.H, 0)
+	for _, r := range req {
+		data = append(data, gin.H{
+			"algoId": r.AlgoId,
+			"sCode":  "0",
+			"sMsg":   "",
+		})
+	}
+
+	c.JSON(200, gin.H{
+		"code": "0",
+		"msg":  "",
+		"data": data,
+	})
+}
+
 // CancelOrder handles POST /api/v5/trade/cancel-order
 func (h *Handler) CancelOrder(c *gin.Context) {
 	account := middleware.GetAccount(c)
@@ -242,6 +422,87 @@ func (h *Handler) CancelOrder(c *gin.Context) {
 				"sMsg":    "",
 			},
 		},
+	})
+}
+
+// CancelBatchOrders handles POST /api/v5/trade/cancel-batch-orders
+func (h *Handler) CancelBatchOrders(c *gin.Context) {
+	account := middleware.GetAccount(c)
+	if account == nil {
+		h.errorResponse(c, "50111", "API key is invalid")
+		return
+	}
+
+	var req []struct {
+		InstId string `json:"instId"`
+		OrdId  string `json:"ordId"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.errorResponse(c, "50000", err.Error())
+		return
+	}
+
+	data := make([]gin.H, 0)
+	for _, r := range req {
+		data = append(data, gin.H{
+			"ordId":   r.OrdId,
+			"clOrdId": "",
+			"sCode":   "0",
+			"sMsg":    "",
+		})
+	}
+
+	c.JSON(200, gin.H{
+		"code": "0",
+		"msg":  "",
+		"data": data,
+	})
+}
+
+// GetOpenOrders handles GET /api/v5/trade/orders-pending
+func (h *Handler) GetOpenOrders(c *gin.Context) {
+	account := middleware.GetAccount(c)
+	if account == nil {
+		h.errorResponse(c, "50111", "API key is invalid")
+		return
+	}
+
+	instId := c.Query("instId")
+	symbol := ""
+	if instId != "" {
+		symbol = convertFromOKXSymbol(instId)
+	}
+
+	orders, _ := h.tradingService.GetOpenOrders(account.ID, symbol)
+
+	data := make([]gin.H, 0)
+	for _, order := range orders {
+		posSide := "long"
+		if order.PositionSide == models.PositionSideShort {
+			posSide = "short"
+		}
+
+		data = append(data, gin.H{
+			"instId":  convertToOKXSymbol(order.Symbol),
+			"ordId":   strconv.Itoa(int(order.ID)),
+			"clOrdId": order.ClientOrderID,
+			"px":      strconv.FormatFloat(order.Price, 'f', 8, 64),
+			"sz":      strconv.FormatFloat(order.Quantity, 'f', 8, 64),
+			"fillSz":  strconv.FormatFloat(order.FilledQty, 'f', 8, 64),
+			"side":    strings.ToLower(string(order.Side)),
+			"posSide": posSide,
+			"ordType": strings.ToLower(string(order.Type)),
+			"state":   "live",
+			"cTime":   strconv.FormatInt(order.CreatedAt.UnixMilli(), 10),
+			"uTime":   strconv.FormatInt(order.UpdatedAt.UnixMilli(), 10),
+		})
+	}
+
+	c.JSON(200, gin.H{
+		"code": "0",
+		"msg":  "",
+		"data": data,
 	})
 }
 
@@ -310,10 +571,35 @@ func (h *Handler) GetMarkPrice(c *gin.Context) {
 	})
 }
 
+// GetTickers handles GET /api/v5/market/tickers
+func (h *Handler) GetTickers(c *gin.Context) {
+	instType := c.Query("instType")
+	_ = instType
+
+	prices := h.priceService.GetAllPrices("okx")
+	data := make([]gin.H, 0)
+
+	for sym, price := range prices {
+		data = append(data, gin.H{
+			"instId":   convertToOKXSymbol(sym),
+			"instType": "SWAP",
+			"last":     strconv.FormatFloat(price, 'f', 8, 64),
+			"askPx":    strconv.FormatFloat(price*1.0001, 'f', 8, 64),
+			"bidPx":    strconv.FormatFloat(price*0.9999, 'f', 8, 64),
+			"ts":       strconv.FormatInt(time.Now().UnixMilli(), 10),
+		})
+	}
+
+	c.JSON(200, gin.H{
+		"code": "0",
+		"msg":  "",
+		"data": data,
+	})
+}
+
 // Helper functions
 
 func convertToOKXSymbol(symbol string) string {
-	// BTCUSDT -> BTC-USDT-SWAP
 	if len(symbol) > 4 && symbol[len(symbol)-4:] == "USDT" {
 		base := symbol[:len(symbol)-4]
 		return base + "-USDT-SWAP"
@@ -322,7 +608,6 @@ func convertToOKXSymbol(symbol string) string {
 }
 
 func convertFromOKXSymbol(instId string) string {
-	// BTC-USDT-SWAP -> BTCUSDT
 	parts := make([]byte, 0)
 	for _, c := range instId {
 		if c != '-' {
@@ -366,7 +651,15 @@ func (h *Handler) RegisterRoutes(router *gin.Engine, authMiddleware gin.HandlerF
 	// Public endpoints (no auth)
 	publicApi := api.Group("/public")
 	{
+		publicApi.GET("/time", h.GetTime)
+		publicApi.GET("/instruments", h.GetInstruments)
 		publicApi.GET("/mark-price", h.GetMarkPrice)
+	}
+
+	// Market endpoints (no auth)
+	marketApi := api.Group("/market")
+	{
+		marketApi.GET("/tickers", h.GetTickers)
 	}
 
 	// Private endpoints (require auth)
@@ -383,6 +676,12 @@ func (h *Handler) RegisterRoutes(router *gin.Engine, authMiddleware gin.HandlerF
 		{
 			trade.POST("/order", h.CreateOrder)
 			trade.POST("/cancel-order", h.CancelOrder)
+			trade.POST("/cancel-batch-orders", h.CancelBatchOrders)
+			trade.GET("/orders-pending", h.GetOpenOrders)
+			// Algo orders (SL/TP)
+			trade.POST("/order-algo", h.CreateAlgoOrder)
+			trade.POST("/cancel-algos", h.CancelAlgoOrder)
+			trade.GET("/orders-algo-pending", h.GetOpenAlgoOrders)
 		}
 	}
 }

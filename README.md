@@ -330,40 +330,79 @@ ccxt-simulator/
 ### Binance 兼容 API
 | 方法 | 路径 | 说明 |
 |------|------|------|
+| GET | `/fapi/v1/time` | 服务器时间 |
+| GET | `/fapi/v1/exchangeInfo` | 交易所信息 (缓存) |
+| GET | `/fapi/v2/account` | 完整账户信息 |
 | GET | `/fapi/v2/balance` | 账户余额 |
 | GET | `/fapi/v2/positionRisk` | 持仓风险 |
+| GET | `/fapi/v2/ticker/price` | 价格行情 |
 | POST | `/fapi/v1/order` | 下单 |
+| GET | `/fapi/v1/order` | 查询订单 |
 | DELETE | `/fapi/v1/order` | 撤单 |
+| GET | `/fapi/v1/openOrders` | 获取挂单 |
+| DELETE | `/fapi/v1/allOpenOrders` | 撤销所有挂单 |
 | POST | `/fapi/v1/leverage` | 设置杠杆 |
+| POST | `/fapi/v1/marginType` | 设置保证金模式 |
+| POST | `/fapi/v1/algoOrder` | **创建 SL/TP 委托** |
+| DELETE | `/fapi/v1/algoOrder` | **取消 SL/TP 委托** |
+| GET | `/fapi/v1/openAlgoOrders` | **获取 SL/TP 挂单** |
+| DELETE | `/fapi/v1/allOpenAlgoOrders` | **取消所有 SL/TP** |
 
 ### OKX 兼容 API
 | 方法 | 路径 | 说明 |
 |------|------|------|
+| GET | `/api/v5/public/time` | 服务器时间 |
+| GET | `/api/v5/public/instruments` | 产品信息 (缓存) |
+| GET | `/api/v5/public/mark-price` | 标记价格 |
+| GET | `/api/v5/market/tickers` | 所有行情 |
 | GET | `/api/v5/account/balance` | 账户余额 |
 | GET | `/api/v5/account/positions` | 持仓 |
-| POST | `/api/v5/trade/order` | 下单 |
 | POST | `/api/v5/account/set-leverage` | 设置杠杆 |
+| POST | `/api/v5/trade/order` | 下单 |
+| POST | `/api/v5/trade/cancel-order` | 撤单 |
+| POST | `/api/v5/trade/cancel-batch-orders` | 批量撤单 |
+| GET | `/api/v5/trade/orders-pending` | 获取挂单 |
+| POST | `/api/v5/trade/order-algo` | **创建 SL/TP 委托** |
+| POST | `/api/v5/trade/cancel-algos` | **取消 SL/TP 委托** |
+| GET | `/api/v5/trade/orders-algo-pending` | **获取 SL/TP 挂单** |
 
 ### Bybit 兼容 API
 | 方法 | 路径 | 说明 |
 |------|------|------|
+| GET | `/v5/market/time` | 服务器时间 |
+| GET | `/v5/market/instruments-info` | 产品信息 (缓存) |
+| GET | `/v5/market/tickers` | 行情 |
 | GET | `/v5/account/wallet-balance` | 钱包余额 |
 | GET | `/v5/position/list` | 持仓列表 |
-| POST | `/v5/order/create` | 创建订单 |
 | POST | `/v5/position/set-leverage` | 设置杠杆 |
+| POST | `/v5/position/trading-stop` | **设置 SL/TP** |
+| POST | `/v5/order/create` | 创建订单 |
+| POST | `/v5/order/cancel` | 取消订单 |
+| POST | `/v5/order/cancel-all` | 取消所有订单 |
+| GET | `/v5/order/realtime` | 获取挂单 |
 
 ### Bitget 兼容 API
 | 方法 | 路径 | 说明 |
 |------|------|------|
+| GET | `/api/v2/public/time` | 服务器时间 |
+| GET | `/api/v2/mix/market/contracts` | 合约信息 (缓存) |
+| GET | `/api/v2/mix/market/ticker` | 行情 |
 | GET | `/api/v2/mix/account/account` | 账户信息 |
+| POST | `/api/v2/mix/account/set-leverage` | 设置杠杆 |
 | GET | `/api/v2/mix/position/all-position` | 所有持仓 |
 | POST | `/api/v2/mix/order/place-order` | 下单 |
+| POST | `/api/v2/mix/order/cancel-order` | 撤单 |
+| POST | `/api/v2/mix/order/cancel-all-orders` | 撤销所有订单 |
+| GET | `/api/v2/mix/order/orders-pending` | 获取挂单 |
+| POST | `/api/v2/mix/order/place-plan-order` | **创建 SL/TP 委托** |
+| POST | `/api/v2/mix/order/cancel-plan-order` | **取消 SL/TP 委托** |
+| GET | `/api/v2/mix/order/orders-plan-pending` | **获取 SL/TP 挂单** |
 
 ### Hyperliquid 兼容 API
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/info` | 查询信息 (allMids/meta/clearinghouseState) |
-| POST | `/exchange` | 交易操作 (order/cancel/updateLeverage) |
+| POST | `/info` | 查询信息 (allMids/meta/clearinghouseState/**openOrders**) |
+| POST | `/exchange` | 交易操作 (order/cancel/updateLeverage/**TP/SL trigger**) |
 
 ---
 

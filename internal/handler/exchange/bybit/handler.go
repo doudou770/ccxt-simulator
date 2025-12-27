@@ -12,16 +12,52 @@ import (
 
 // Handler handles Bybit-compatible API requests
 type Handler struct {
-	tradingService *service.TradingService
-	priceService   *service.PriceService
+	tradingService      *service.TradingService
+	priceService        *service.PriceService
+	exchangeInfoService *service.ExchangeInfoService
 }
 
 // NewHandler creates a new Bybit handler
-func NewHandler(tradingService *service.TradingService, priceService *service.PriceService) *Handler {
+func NewHandler(tradingService *service.TradingService, priceService *service.PriceService, exchangeInfoService *service.ExchangeInfoService) *Handler {
 	return &Handler{
-		tradingService: tradingService,
-		priceService:   priceService,
+		tradingService:      tradingService,
+		priceService:        priceService,
+		exchangeInfoService: exchangeInfoService,
 	}
+}
+
+// GetServerTime handles GET /v5/market/time
+func (h *Handler) GetServerTime(c *gin.Context) {
+	c.JSON(200, gin.H{
+		"retCode": 0,
+		"retMsg":  "OK",
+		"result": gin.H{
+			"timeSecond": strconv.FormatInt(time.Now().Unix(), 10),
+			"timeNano":   strconv.FormatInt(time.Now().UnixNano(), 10),
+		},
+		"time": time.Now().UnixMilli(),
+	})
+}
+
+// GetInstrumentsInfo handles GET /v5/market/instruments-info
+func (h *Handler) GetInstrumentsInfo(c *gin.Context) {
+	if h.exchangeInfoService != nil {
+		data, err := h.exchangeInfoService.GetExchangeInfo("bybit")
+		if err == nil && data != nil {
+			c.JSON(200, data)
+			return
+		}
+	}
+
+	c.JSON(200, gin.H{
+		"retCode": 0,
+		"retMsg":  "OK",
+		"result": gin.H{
+			"category": "linear",
+			"list":     []gin.H{},
+		},
+		"time": time.Now().UnixMilli(),
+	})
 }
 
 // GetWalletBalance handles GET /v5/account/wallet-balance
@@ -152,7 +188,6 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 	quantity, _ := strconv.ParseFloat(req.Qty, 64)
 	price, _ := strconv.ParseFloat(req.Price, 64)
 
-	// Map position side
 	var posSide models.PositionSide
 	if req.Side == "Buy" {
 		posSide = models.PositionSideLong
@@ -160,7 +195,6 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 		posSide = models.PositionSideShort
 	}
 
-	// Map order type
 	var orderType models.OrderType
 	switch req.OrderType {
 	case "Limit":
@@ -205,6 +239,114 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 		"result": gin.H{
 			"orderId":     strconv.Itoa(int(order.ID)),
 			"orderLinkId": order.ClientOrderID,
+		},
+		"time": time.Now().UnixMilli(),
+	})
+}
+
+// SetTradingStop handles POST /v5/position/trading-stop (SL/TP)
+func (h *Handler) SetTradingStop(c *gin.Context) {
+	account := middleware.GetAccount(c)
+	if account == nil {
+		h.errorResponse(c, 10003, "Invalid apiKey")
+		return
+	}
+
+	var req struct {
+		Category     string `json:"category"`
+		Symbol       string `json:"symbol"`
+		TakeProfit   string `json:"takeProfit"`
+		StopLoss     string `json:"stopLoss"`
+		TpTriggerBy  string `json:"tpTriggerBy"`
+		SlTriggerBy  string `json:"slTriggerBy"`
+		TpslMode     string `json:"tpslMode"`
+		TpOrderType  string `json:"tpOrderType"`
+		SlOrderType  string `json:"slOrderType"`
+		TpSize       string `json:"tpSize"`
+		SlSize       string `json:"slSize"`
+		TpLimitPrice string `json:"tpLimitPrice"`
+		SlLimitPrice string `json:"slLimitPrice"`
+		PositionIdx  int    `json:"positionIdx"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.errorResponse(c, 10001, err.Error())
+		return
+	}
+
+	// Determine position side from positionIdx
+	var posSide models.PositionSide
+	if req.PositionIdx == 1 {
+		posSide = models.PositionSideLong
+	} else if req.PositionIdx == 2 {
+		posSide = models.PositionSideShort
+	} else {
+		posSide = models.PositionSideLong // Default
+	}
+
+	// Set Stop Loss
+	if req.StopLoss != "" {
+		sl, _ := strconv.ParseFloat(req.StopLoss, 64)
+		if sl > 0 {
+			h.tradingService.SetStopLoss(account.ID, req.Symbol, posSide, sl)
+		}
+	}
+
+	// Set Take Profit
+	if req.TakeProfit != "" {
+		tp, _ := strconv.ParseFloat(req.TakeProfit, 64)
+		if tp > 0 {
+			h.tradingService.SetTakeProfit(account.ID, req.Symbol, posSide, tp)
+		}
+	}
+
+	c.JSON(200, gin.H{
+		"retCode": 0,
+		"retMsg":  "OK",
+		"result":  gin.H{},
+		"time":    time.Now().UnixMilli(),
+	})
+}
+
+// GetOpenOrders handles GET /v5/order/realtime
+func (h *Handler) GetOpenOrders(c *gin.Context) {
+	account := middleware.GetAccount(c)
+	if account == nil {
+		h.errorResponse(c, 10003, "Invalid apiKey")
+		return
+	}
+
+	symbol := c.Query("symbol")
+	orders, _ := h.tradingService.GetOpenOrders(account.ID, symbol)
+
+	list := make([]gin.H, 0)
+	for _, order := range orders {
+		side := "Buy"
+		if order.Side == models.OrderSideSell {
+			side = "Sell"
+		}
+
+		list = append(list, gin.H{
+			"orderId":     strconv.Itoa(int(order.ID)),
+			"orderLinkId": order.ClientOrderID,
+			"symbol":      order.Symbol,
+			"side":        side,
+			"orderType":   string(order.Type),
+			"price":       strconv.FormatFloat(order.Price, 'f', 8, 64),
+			"qty":         strconv.FormatFloat(order.Quantity, 'f', 8, 64),
+			"cumExecQty":  strconv.FormatFloat(order.FilledQty, 'f', 8, 64),
+			"orderStatus": string(order.Status),
+			"createdTime": strconv.FormatInt(order.CreatedAt.UnixMilli(), 10),
+			"updatedTime": strconv.FormatInt(order.UpdatedAt.UnixMilli(), 10),
+		})
+	}
+
+	c.JSON(200, gin.H{
+		"retCode": 0,
+		"retMsg":  "OK",
+		"result": gin.H{
+			"category": "linear",
+			"list":     list,
 		},
 		"time": time.Now().UnixMilli(),
 	})
@@ -268,9 +410,7 @@ func (h *Handler) CancelAllOrders(c *gin.Context) {
 		"retCode": 0,
 		"retMsg":  "OK",
 		"result": gin.H{
-			"list": []gin.H{
-				{"orderId": "", "orderLinkId": ""},
-			},
+			"list":    []gin.H{},
 			"success": strconv.FormatInt(count, 10),
 		},
 		"time": time.Now().UnixMilli(),
@@ -315,10 +455,49 @@ func (h *Handler) SetLeverage(c *gin.Context) {
 func (h *Handler) GetTickers(c *gin.Context) {
 	symbol := c.Query("symbol")
 
-	price, err := h.priceService.GetPrice("bybit", symbol)
-	if err != nil {
-		h.errorResponse(c, 10001, "Invalid symbol")
+	if symbol != "" {
+		price, err := h.priceService.GetPrice("bybit", symbol)
+		if err != nil {
+			h.errorResponse(c, 10001, "Invalid symbol")
+			return
+		}
+
+		c.JSON(200, gin.H{
+			"retCode": 0,
+			"retMsg":  "OK",
+			"result": gin.H{
+				"category": "linear",
+				"list": []gin.H{
+					{
+						"symbol":          symbol,
+						"lastPrice":       strconv.FormatFloat(price, 'f', 8, 64),
+						"markPrice":       strconv.FormatFloat(price, 'f', 8, 64),
+						"indexPrice":      strconv.FormatFloat(price, 'f', 8, 64),
+						"prevPrice24h":    strconv.FormatFloat(price*0.98, 'f', 8, 64),
+						"price24hPcnt":    "0.0200",
+						"highPrice24h":    strconv.FormatFloat(price*1.02, 'f', 8, 64),
+						"lowPrice24h":     strconv.FormatFloat(price*0.98, 'f', 8, 64),
+						"volume24h":       "1000000",
+						"turnover24h":     "100000000",
+						"fundingRate":     "0.0001",
+						"nextFundingTime": strconv.FormatInt(time.Now().Add(8*time.Hour).UnixMilli(), 10),
+					},
+				},
+			},
+			"time": time.Now().UnixMilli(),
+		})
 		return
+	}
+
+	// Return all prices
+	prices := h.priceService.GetAllPrices("bybit")
+	list := make([]gin.H, 0)
+	for sym, price := range prices {
+		list = append(list, gin.H{
+			"symbol":    sym,
+			"lastPrice": strconv.FormatFloat(price, 'f', 8, 64),
+			"markPrice": strconv.FormatFloat(price, 'f', 8, 64),
+		})
 	}
 
 	c.JSON(200, gin.H{
@@ -326,22 +505,7 @@ func (h *Handler) GetTickers(c *gin.Context) {
 		"retMsg":  "OK",
 		"result": gin.H{
 			"category": "linear",
-			"list": []gin.H{
-				{
-					"symbol":          symbol,
-					"lastPrice":       strconv.FormatFloat(price, 'f', 8, 64),
-					"markPrice":       strconv.FormatFloat(price, 'f', 8, 64),
-					"indexPrice":      strconv.FormatFloat(price, 'f', 8, 64),
-					"prevPrice24h":    strconv.FormatFloat(price*0.98, 'f', 8, 64),
-					"price24hPcnt":    "0.0200",
-					"highPrice24h":    strconv.FormatFloat(price*1.02, 'f', 8, 64),
-					"lowPrice24h":     strconv.FormatFloat(price*0.98, 'f', 8, 64),
-					"volume24h":       "1000000",
-					"turnover24h":     "100000000",
-					"fundingRate":     "0.0001",
-					"nextFundingTime": strconv.FormatInt(time.Now().Add(8*time.Hour).UnixMilli(), 10),
-				},
-			},
+			"list":     list,
 		},
 		"time": time.Now().UnixMilli(),
 	})
@@ -380,6 +544,8 @@ func (h *Handler) RegisterRoutes(router *gin.Engine, authMiddleware gin.HandlerF
 	// Public endpoints
 	market := v5.Group("/market")
 	{
+		market.GET("/time", h.GetServerTime)
+		market.GET("/instruments-info", h.GetInstrumentsInfo)
 		market.GET("/tickers", h.GetTickers)
 	}
 
@@ -395,6 +561,7 @@ func (h *Handler) RegisterRoutes(router *gin.Engine, authMiddleware gin.HandlerF
 		{
 			position.GET("/list", h.GetPositionInfo)
 			position.POST("/set-leverage", h.SetLeverage)
+			position.POST("/trading-stop", h.SetTradingStop)
 		}
 
 		order := v5.Group("/order")
@@ -402,6 +569,7 @@ func (h *Handler) RegisterRoutes(router *gin.Engine, authMiddleware gin.HandlerF
 			order.POST("/create", h.CreateOrder)
 			order.POST("/cancel", h.CancelOrder)
 			order.POST("/cancel-all", h.CancelAllOrders)
+			order.GET("/realtime", h.GetOpenOrders)
 		}
 	}
 }

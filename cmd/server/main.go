@@ -132,22 +132,22 @@ func main() {
 	binanceHandler.RegisterRoutes(router, binanceAuthMiddleware)
 
 	// OKX compatible routes (/api/v5/*)
-	okxHandler := exchangeOKX.NewHandler(tradingService, priceService)
+	okxHandler := exchangeOKX.NewHandler(tradingService, priceService, exchangeInfoService)
 	okxAuthMiddleware := middleware.OKXAuthMiddleware(accountService, cfg.Encryption.AESKey)
 	okxHandler.RegisterRoutes(router, okxAuthMiddleware)
 
 	// Bybit compatible routes (/v5/*)
-	bybitHandler := exchangeBybit.NewHandler(tradingService, priceService)
+	bybitHandler := exchangeBybit.NewHandler(tradingService, priceService, exchangeInfoService)
 	bybitAuthMiddleware := middleware.BybitAuthMiddleware(accountService, cfg.Encryption.AESKey)
 	bybitHandler.RegisterRoutes(router, bybitAuthMiddleware)
 
 	// Bitget compatible routes (/api/v2/mix/*)
-	bitgetHandler := exchangeBitget.NewHandler(tradingService, priceService)
+	bitgetHandler := exchangeBitget.NewHandler(tradingService, priceService, exchangeInfoService)
 	bitgetAuthMiddleware := middleware.BitgetAuthMiddleware(accountService, cfg.Encryption.AESKey)
 	bitgetHandler.RegisterRoutes(router, bitgetAuthMiddleware)
 
 	// Hyperliquid compatible routes (/info, /exchange)
-	hyperliquidHandler := exchangeHyperliquid.NewHandler(tradingService, priceService)
+	hyperliquidHandler := exchangeHyperliquid.NewHandler(tradingService, priceService, exchangeInfoService)
 	hyperliquidAuthMiddleware := middleware.HyperliquidAuthMiddleware(accountService, cfg.Encryption.AESKey)
 	hyperliquidHandler.RegisterRoutes(router, hyperliquidAuthMiddleware)
 

@@ -11,15 +11,17 @@ import (
 
 // Handler handles Hyperliquid-compatible API requests
 type Handler struct {
-	tradingService *service.TradingService
-	priceService   *service.PriceService
+	tradingService      *service.TradingService
+	priceService        *service.PriceService
+	exchangeInfoService *service.ExchangeInfoService
 }
 
 // NewHandler creates a new Hyperliquid handler
-func NewHandler(tradingService *service.TradingService, priceService *service.PriceService) *Handler {
+func NewHandler(tradingService *service.TradingService, priceService *service.PriceService, exchangeInfoService *service.ExchangeInfoService) *Handler {
 	return &Handler{
-		tradingService: tradingService,
-		priceService:   priceService,
+		tradingService:      tradingService,
+		priceService:        priceService,
+		exchangeInfoService: exchangeInfoService,
 	}
 }
 
@@ -86,52 +88,73 @@ func (h *Handler) GetUserState(c *gin.Context) {
 	})
 }
 
-// PlaceOrder handles POST /exchange (action: order)
-func (h *Handler) PlaceOrder(c *gin.Context) {
+// GetOpenOrders handles POST /info (type: openOrders)
+func (h *Handler) GetOpenOrders(c *gin.Context, user string) {
 	account := middleware.GetAccount(c)
 	if account == nil {
 		c.JSON(401, gin.H{"error": "Unauthorized"})
 		return
 	}
 
-	var req struct {
-		Action string `json:"action"`
-		Orders []struct {
-			A int    `json:"a"` // asset index
-			B bool   `json:"b"` // is buy
-			P string `json:"p"` // price
-			S string `json:"s"` // size
-			R bool   `json:"r"` // reduce only
-			T gin.H  `json:"t"` // order type
-		} `json:"orders"`
+	orders, _ := h.tradingService.GetOpenOrders(account.ID, "")
+
+	result := make([]gin.H, 0)
+	for _, order := range orders {
+		result = append(result, gin.H{
+			"coin":      convertSymbol(order.Symbol),
+			"oid":       order.ID,
+			"cloid":     order.ClientOrderID,
+			"side":      string(order.Side),
+			"limitPx":   strconv.FormatFloat(order.Price, 'f', 8, 64),
+			"sz":        strconv.FormatFloat(order.Quantity, 'f', 8, 64),
+			"origSz":    strconv.FormatFloat(order.Quantity, 'f', 8, 64),
+			"timestamp": order.CreatedAt.UnixMilli(),
+		})
 	}
 
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
+	c.JSON(200, result)
+}
+
+// PlaceOrder handles POST /exchange (action: order)
+func (h *Handler) PlaceOrder(c *gin.Context, req map[string]interface{}) {
+	account := middleware.GetAccount(c)
+	if account == nil {
+		c.JSON(401, gin.H{"error": "Unauthorized"})
 		return
 	}
 
-	if req.Action != "order" || len(req.Orders) == 0 {
-		c.JSON(400, gin.H{"error": "Invalid request"})
+	orders, ok := req["orders"].([]interface{})
+	if !ok || len(orders) == 0 {
+		c.JSON(400, gin.H{"error": "Invalid orders"})
 		return
 	}
 
 	// Process first order
-	orderReq := req.Orders[0]
-	symbol := "BTCUSDT" // Would need asset index mapping
-	quantity, _ := strconv.ParseFloat(orderReq.S, 64)
-	price, _ := strconv.ParseFloat(orderReq.P, 64)
+	orderMap := orders[0].(map[string]interface{})
+
+	// Get asset and convert to symbol
+	a, _ := orderMap["a"].(float64)
+	symbol := assetIndexToSymbol(int(a))
+
+	// Get order details
+	isBuy, _ := orderMap["b"].(bool)
+	priceStr, _ := orderMap["p"].(string)
+	sizeStr, _ := orderMap["s"].(string)
+	reduceOnly, _ := orderMap["r"].(bool)
+
+	quantity, _ := strconv.ParseFloat(sizeStr, 64)
+	price, _ := strconv.ParseFloat(priceStr, 64)
 
 	var posSide models.PositionSide
-	if orderReq.B {
+	if isBuy {
 		posSide = models.PositionSideLong
 	} else {
 		posSide = models.PositionSideShort
 	}
 
 	orderType := models.OrderTypeLimit
-	if orderReq.T != nil {
-		if _, ok := orderReq.T["market"]; ok {
+	if t, ok := orderMap["t"].(map[string]interface{}); ok {
+		if _, isMarket := t["market"]; isMarket {
 			orderType = models.OrderTypeMarket
 		}
 	}
@@ -139,7 +162,7 @@ func (h *Handler) PlaceOrder(c *gin.Context) {
 	var order *models.Order
 	var err error
 
-	if !orderReq.R {
+	if !reduceOnly {
 		openReq := &service.OpenPositionRequest{
 			AccountID: account.ID,
 			Symbol:    symbol,
@@ -183,6 +206,91 @@ func (h *Handler) PlaceOrder(c *gin.Context) {
 	})
 }
 
+// PlaceTpSl handles POST /exchange (action: order with tpsl)
+func (h *Handler) PlaceTpSl(c *gin.Context, req map[string]interface{}) {
+	account := middleware.GetAccount(c)
+	if account == nil {
+		c.JSON(401, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	orders, ok := req["orders"].([]interface{})
+	if !ok || len(orders) == 0 {
+		c.JSON(400, gin.H{"error": "Invalid orders"})
+		return
+	}
+
+	orderMap := orders[0].(map[string]interface{})
+
+	a, _ := orderMap["a"].(float64)
+	symbol := assetIndexToSymbol(int(a))
+
+	isBuy, _ := orderMap["b"].(bool)
+	sizeStr, _ := orderMap["s"].(string)
+	quantity, _ := strconv.ParseFloat(sizeStr, 64)
+
+	var posSide models.PositionSide
+	if isBuy {
+		posSide = models.PositionSideLong
+	} else {
+		posSide = models.PositionSideShort
+	}
+
+	// Determine TP or SL based on trigger
+	var orderType models.OrderType
+	var triggerPrice float64
+
+	if t, ok := orderMap["t"].(map[string]interface{}); ok {
+		if trigger, ok := t["trigger"].(map[string]interface{}); ok {
+			if tp, ok := trigger["triggerPx"].(string); ok {
+				triggerPrice, _ = strconv.ParseFloat(tp, 64)
+			}
+			if isMarket, _ := trigger["isMarket"].(bool); isMarket {
+				// Check if it's TP or SL based on direction
+				if tpsl, ok := trigger["tpsl"].(string); ok {
+					if tpsl == "tp" {
+						orderType = models.OrderTypeTakeProfit
+					} else {
+						orderType = models.OrderTypeStopMarket
+					}
+				}
+			}
+		}
+	}
+
+	closeReq := &service.ClosePositionRequest{
+		AccountID:  account.ID,
+		Symbol:     symbol,
+		Side:       posSide,
+		Quantity:   &quantity,
+		OrderType:  orderType,
+		StopPrice:  triggerPrice,
+		ReduceOnly: true,
+	}
+
+	order, _, err := h.tradingService.ClosePosition(closeReq, models.ExchangeHyperliquid)
+	if err != nil {
+		h.handleError(c, err)
+		return
+	}
+
+	c.JSON(200, gin.H{
+		"status": "ok",
+		"response": gin.H{
+			"type": "order",
+			"data": gin.H{
+				"statuses": []gin.H{
+					{
+						"resting": gin.H{
+							"oid": order.ID,
+						},
+					},
+				},
+			},
+		},
+	})
+}
+
 // CancelOrder handles POST /exchange (action: cancel)
 func (h *Handler) CancelOrder(c *gin.Context) {
 	account := middleware.GetAccount(c)
@@ -203,27 +311,19 @@ func (h *Handler) CancelOrder(c *gin.Context) {
 }
 
 // SetLeverage handles POST /exchange (action: updateLeverage)
-func (h *Handler) SetLeverage(c *gin.Context) {
+func (h *Handler) SetLeverage(c *gin.Context, req map[string]interface{}) {
 	account := middleware.GetAccount(c)
 	if account == nil {
 		c.JSON(401, gin.H{"error": "Unauthorized"})
 		return
 	}
 
-	var req struct {
-		Action   string `json:"action"`
-		Asset    int    `json:"asset"`
-		IsCross  bool   `json:"isCross"`
-		Leverage int    `json:"leverage"`
-	}
+	asset, _ := req["asset"].(float64)
+	leverage, _ := req["leverage"].(float64)
 
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
-		return
-	}
+	symbol := assetIndexToSymbol(int(asset))
 
-	symbol := "BTCUSDT" // Would need asset index mapping
-	if err := h.tradingService.SetLeverage(account.ID, symbol, req.Leverage); err != nil {
+	if err := h.tradingService.SetLeverage(account.ID, symbol, int(leverage)); err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
@@ -242,7 +342,6 @@ func (h *Handler) GetAllMids(c *gin.Context) {
 
 	mids := make(map[string]string)
 	for symbol, price := range prices {
-		// Convert to HL format (remove USDT suffix)
 		hlSymbol := convertSymbol(symbol)
 		mids[hlSymbol] = strconv.FormatFloat(price, 'f', 8, 64)
 	}
@@ -250,60 +349,82 @@ func (h *Handler) GetAllMids(c *gin.Context) {
 	c.JSON(200, mids)
 }
 
+// GetMeta handles POST /info (type: meta)
+func (h *Handler) GetMeta(c *gin.Context) {
+	if h.exchangeInfoService != nil {
+		data, err := h.exchangeInfoService.GetExchangeInfo("hyperliquid")
+		if err == nil && data != nil {
+			c.JSON(200, data)
+			return
+		}
+	}
+
+	c.JSON(200, gin.H{
+		"universe": []gin.H{
+			{"name": "BTC", "szDecimals": 5},
+			{"name": "ETH", "szDecimals": 4},
+			{"name": "SOL", "szDecimals": 2},
+			{"name": "DOGE", "szDecimals": 0},
+			{"name": "XRP", "szDecimals": 1},
+		},
+	})
+}
+
 // InfoHandler handles POST /info route
 func (h *Handler) InfoHandler(c *gin.Context) {
-	var req struct {
-		Type string `json:"type"`
-		User string `json:"user"`
-	}
+	var req map[string]interface{}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
 
-	switch req.Type {
+	infoType, _ := req["type"].(string)
+	user, _ := req["user"].(string)
+
+	switch infoType {
 	case "allMids":
 		h.GetAllMids(c)
 	case "clearinghouseState":
 		h.GetUserState(c)
 	case "meta":
 		h.GetMeta(c)
+	case "openOrders":
+		h.GetOpenOrders(c, user)
 	default:
 		c.JSON(400, gin.H{"error": "Unknown info type"})
 	}
 }
 
-// GetMeta handles POST /info (type: meta)
-func (h *Handler) GetMeta(c *gin.Context) {
-	c.JSON(200, gin.H{
-		"universe": []gin.H{
-			{"name": "BTC", "szDecimals": 5},
-			{"name": "ETH", "szDecimals": 4},
-			{"name": "SOL", "szDecimals": 2},
-		},
-	})
-}
-
 // ExchangeHandler handles POST /exchange route
 func (h *Handler) ExchangeHandler(c *gin.Context) {
-	var req struct {
-		Action string `json:"action"`
-	}
+	var req map[string]interface{}
 
-	// Peek at the action without consuming body
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
 
-	switch req.Action {
+	action, _ := req["action"].(string)
+
+	switch action {
 	case "order":
-		h.PlaceOrder(c)
+		// Check if it has trigger (TP/SL order)
+		if orders, ok := req["orders"].([]interface{}); ok && len(orders) > 0 {
+			if orderMap, ok := orders[0].(map[string]interface{}); ok {
+				if t, ok := orderMap["t"].(map[string]interface{}); ok {
+					if _, hasTrigger := t["trigger"]; hasTrigger {
+						h.PlaceTpSl(c, req)
+						return
+					}
+				}
+			}
+		}
+		h.PlaceOrder(c, req)
 	case "cancel":
 		h.CancelOrder(c)
 	case "updateLeverage":
-		h.SetLeverage(c)
+		h.SetLeverage(c, req)
 	default:
 		c.JSON(400, gin.H{"error": "Unknown action"})
 	}
@@ -313,13 +434,22 @@ func (h *Handler) ExchangeHandler(c *gin.Context) {
 
 func convertSymbol(symbol string) string {
 	// BTCUSDT -> BTC
-	if len(symbol) > 4 && (symbol[len(symbol)-4:] == "USDT" || symbol[len(symbol)-3:] == "USD") {
-		if symbol[len(symbol)-4:] == "USDT" {
-			return symbol[:len(symbol)-4]
-		}
+	if len(symbol) > 4 && symbol[len(symbol)-4:] == "USDT" {
+		return symbol[:len(symbol)-4]
+	}
+	if len(symbol) > 3 && symbol[len(symbol)-3:] == "USD" {
 		return symbol[:len(symbol)-3]
 	}
 	return symbol
+}
+
+func assetIndexToSymbol(index int) string {
+	// HL uses asset indices, convert to symbol
+	assets := []string{"BTCUSDT", "ETHUSDT", "SOLUSDT", "DOGEUSDT", "XRPUSDT"}
+	if index >= 0 && index < len(assets) {
+		return assets[index]
+	}
+	return "BTCUSDT"
 }
 
 func (h *Handler) handleError(c *gin.Context, err error) {
