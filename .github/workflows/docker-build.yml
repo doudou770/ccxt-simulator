@@ -7,10 +7,6 @@ on:
       - master
     tags:
       - 'v*'
-  pull_request:
-    branches:
-      - main
-      - master
   workflow_dispatch:
     inputs:
       version:
@@ -110,7 +106,9 @@ jobs:
             BUILD_TIME=${{ steps.version.outputs.BUILD_TIME }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
+          # 如需 ARM64 支持，取消下面的注释（构建时间会增加 10-15 分钟）
+          # platforms: linux/amd64,linux/arm64
 
       - name: Create Git tag
         if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'

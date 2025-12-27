@@ -3,7 +3,7 @@
 基于真实市场价格的加密货币合约交易模拟器。
 
 ![Go Version](https://img.shields.io/badge/Go-1.24+-00ADD8?style=flat&logo=go)
-![License](https://img.shields.io/badge/License-MIT-green)
+![License](https://img.shields.io/badge/License-Apache%202.0-blue)
 ![Exchanges](https://img.shields.io/badge/Exchanges-5-blue)
 
 ## ✨ 功能特性
