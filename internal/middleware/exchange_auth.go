@@ -409,3 +409,161 @@ func GetAPISecret(c *gin.Context) string {
 	}
 	return secret.(string)
 }
+
+// BitgetAuthMiddleware creates authentication middleware for Bitget API
+func BitgetAuthMiddleware(accountService *service.AccountService, aesKey string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Get headers
+		apiKey := c.GetHeader("ACCESS-KEY")
+		timestamp := c.GetHeader("ACCESS-TIMESTAMP")
+		sign := c.GetHeader("ACCESS-SIGN")
+		passphrase := c.GetHeader("ACCESS-PASSPHRASE")
+
+		if apiKey == "" || timestamp == "" || sign == "" {
+			c.JSON(401, gin.H{
+				"code": "40001",
+				"msg":  "Invalid API credentials.",
+			})
+			c.Abort()
+			return
+		}
+
+		// Find account by API key
+		account, err := accountService.GetAccountByAPIKey(apiKey)
+		if err != nil {
+			c.JSON(401, gin.H{
+				"code": "40001",
+				"msg":  "Invalid API Key.",
+			})
+			c.Abort()
+			return
+		}
+
+		// Verify this is a Bitget account
+		if account.ExchangeType != models.ExchangeBitget {
+			c.JSON(401, gin.H{
+				"code": "40001",
+				"msg":  "API key is not for Bitget.",
+			})
+			c.Abort()
+			return
+		}
+
+		// Decrypt API secret
+		apiSecret, err := crypto.DecryptAES(account.APISecretEncrypted, aesKey)
+		if err != nil {
+			c.JSON(500, gin.H{
+				"code": "50000",
+				"msg":  "Internal error.",
+			})
+			c.Abort()
+			return
+		}
+
+		// Verify passphrase if provided
+		if passphrase != "" && account.PassphraseEncrypted != "" {
+			storedPassphrase, err := crypto.DecryptAES(account.PassphraseEncrypted, aesKey)
+			if err != nil || passphrase != storedPassphrase {
+				c.JSON(401, gin.H{
+					"code": "40001",
+					"msg":  "Invalid passphrase.",
+				})
+				c.Abort()
+				return
+			}
+		}
+
+		// Verify signature
+		if !verifyBitgetSignature(c, timestamp, apiSecret) {
+			c.JSON(401, gin.H{
+				"code": "40009",
+				"msg":  "Invalid signature.",
+			})
+			c.Abort()
+			return
+		}
+
+		// Store account in context
+		c.Set(ContextKeyAccount, account)
+		c.Set(ContextKeyAPISecret, apiSecret)
+		c.Next()
+	}
+}
+
+// verifyBitgetSignature verifies the HMAC-SHA256 + Base64 signature for Bitget
+func verifyBitgetSignature(c *gin.Context, timestamp, apiSecret string) bool {
+	sign := c.GetHeader("ACCESS-SIGN")
+	if sign == "" {
+		return false
+	}
+
+	// Build prehash string: timestamp + method + requestPath + body
+	method := c.Request.Method
+	requestPath := c.Request.URL.Path
+	if c.Request.URL.RawQuery != "" {
+		requestPath += "?" + c.Request.URL.RawQuery
+	}
+
+	var body string
+	if method == "POST" || method == "PUT" {
+		bodyBytes, _ := c.GetRawData()
+		body = string(bodyBytes)
+	}
+
+	prehash := timestamp + method + requestPath + body
+
+	// Calculate signature
+	mac := hmac.New(sha256.New, []byte(apiSecret))
+	mac.Write([]byte(prehash))
+	expectedSig := base64.StdEncoding.EncodeToString(mac.Sum(nil))
+
+	return hmac.Equal([]byte(sign), []byte(expectedSig))
+}
+
+// HyperliquidAuthMiddleware creates authentication middleware for Hyperliquid API
+func HyperliquidAuthMiddleware(accountService *service.AccountService, aesKey string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Hyperliquid uses wallet signature authentication
+		// For simulation, we use a simplified API key approach
+
+		// Get API key from header or query
+		apiKey := c.GetHeader("HL-API-KEY")
+		if apiKey == "" {
+			apiKey = c.Query("apiKey")
+		}
+
+		if apiKey == "" {
+			c.JSON(401, gin.H{"error": "Missing API key"})
+			c.Abort()
+			return
+		}
+
+		// Find account by API key
+		account, err := accountService.GetAccountByAPIKey(apiKey)
+		if err != nil {
+			c.JSON(401, gin.H{"error": "Invalid API key"})
+			c.Abort()
+			return
+		}
+
+		// Verify this is a Hyperliquid account
+		if account.ExchangeType != models.ExchangeHyperliquid {
+			c.JSON(401, gin.H{"error": "API key is not for Hyperliquid"})
+			c.Abort()
+			return
+		}
+
+		// Decrypt API secret (used as wallet private key in real implementation)
+		apiSecret, err := crypto.DecryptAES(account.APISecretEncrypted, aesKey)
+		if err != nil {
+			c.JSON(500, gin.H{"error": "Internal error"})
+			c.Abort()
+			return
+		}
+
+		// Store account in context
+		c.Set(ContextKeyAccount, account)
+		c.Set(ContextKeyAPISecret, apiSecret)
+		c.Next()
+	}
+}

@@ -13,7 +13,9 @@ import (
 	"github.com/ccxt-simulator/internal/config"
 	"github.com/ccxt-simulator/internal/handler"
 	exchangeBinance "github.com/ccxt-simulator/internal/handler/exchange/binance"
+	exchangeBitget "github.com/ccxt-simulator/internal/handler/exchange/bitget"
 	exchangeBybit "github.com/ccxt-simulator/internal/handler/exchange/bybit"
+	exchangeHyperliquid "github.com/ccxt-simulator/internal/handler/exchange/hyperliquid"
 	exchangeOKX "github.com/ccxt-simulator/internal/handler/exchange/okx"
 	"github.com/ccxt-simulator/internal/middleware"
 	"github.com/ccxt-simulator/internal/models"
@@ -134,6 +136,16 @@ func main() {
 	bybitHandler := exchangeBybit.NewHandler(tradingService, priceService)
 	bybitAuthMiddleware := middleware.BybitAuthMiddleware(accountService, cfg.Encryption.AESKey)
 	bybitHandler.RegisterRoutes(router, bybitAuthMiddleware)
+
+	// Bitget compatible routes (/api/v2/mix/*)
+	bitgetHandler := exchangeBitget.NewHandler(tradingService, priceService)
+	bitgetAuthMiddleware := middleware.BitgetAuthMiddleware(accountService, cfg.Encryption.AESKey)
+	bitgetHandler.RegisterRoutes(router, bitgetAuthMiddleware)
+
+	// Hyperliquid compatible routes (/info, /exchange)
+	hyperliquidHandler := exchangeHyperliquid.NewHandler(tradingService, priceService)
+	hyperliquidAuthMiddleware := middleware.HyperliquidAuthMiddleware(accountService, cfg.Encryption.AESKey)
+	hyperliquidHandler.RegisterRoutes(router, hyperliquidAuthMiddleware)
 
 	// Create HTTP server
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
