@@ -28,6 +28,13 @@ import (
 	"gorm.io/gorm/logger"
 )
 
+// Build info (injected at build time via -ldflags)
+var (
+	Version   = "dev"
+	Commit    = "unknown"
+	BuildTime = "unknown"
+)
+
 func main() {
 	// Load configuration
 	cfg, err := config.Load("config.yaml")
@@ -96,9 +103,12 @@ func main() {
 	// Health check endpoint
 	router.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
-			"status":    "ok",
-			"time":      time.Now().Unix(),
-			"exchanges": priceService.GetExchangeStatus(),
+			"status":     "ok",
+			"version":    Version,
+			"commit":     Commit,
+			"build_time": BuildTime,
+			"time":       time.Now().Unix(),
+			"exchanges":  priceService.GetExchangeStatus(),
 		})
 	})
 
