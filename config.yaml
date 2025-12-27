@@ -1,0 +1,25 @@
+server:
+  host: "0.0.0.0"
+  port: 8080
+  mode: "debug"  # debug, release, test
+
+database:
+  host: "localhost"
+  port: 5432
+  user: "postgres"
+  password: "123456"
+  dbname: "ccxt_simulator"
+  sslmode: "disable"
+
+redis:
+  host: "localhost"
+  port: 6379
+  password: "123456"
+  db: 0
+
+jwt:
+  secret: "your-super-secret-jwt-key-change-in-production"
+  expire_hours: 24
+
+encryption:
+  aes_key: "ccxt-simulator-32bytes-aes-key!!"  # Must be exactly 32 bytes for AES-256
