@@ -22,4 +22,4 @@ jwt:
   expire_hours: 24
 
 encryption:
-  aes_key: "your-32-byte-aes-key-here!!!"  # Must be 32 bytes for AES-256
+  aes_key: "ccxt-simulator-32bytes-aes-key!!"  # Must be exactly 32 bytes for AES-256

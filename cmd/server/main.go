@@ -50,6 +50,10 @@ func main() {
 	// Initialize repositories
 	userRepo := repository.NewUserRepository(db)
 	accountRepo := repository.NewAccountRepository(db)
+	positionRepo := repository.NewPositionRepository(db)
+	orderRepo := repository.NewOrderRepository(db)
+	tradeRepo := repository.NewTradeRepository(db)
+	closedPnLRepo := repository.NewClosedPnLRepository(db)
 
 	// Initialize services
 	authService := service.NewAuthService(userRepo, cfg.JWT)
@@ -62,10 +66,21 @@ func main() {
 	// Initialize price service
 	priceService := service.NewPriceService(rdb)
 
+	// Initialize trading service
+	tradingService := service.NewTradingService(
+		accountRepo,
+		positionRepo,
+		orderRepo,
+		tradeRepo,
+		closedPnLRepo,
+		priceService,
+	)
+
 	// Initialize handlers
 	authHandler := handler.NewAuthHandler(authService)
 	accountHandler := handler.NewAccountHandler(accountService)
 	priceHandler := handler.NewPriceHandler(priceService)
+	tradingHandler := handler.NewTradingHandler(tradingService, accountService)
 
 	// Create Gin router
 	router := gin.Default()
@@ -94,6 +109,9 @@ func main() {
 
 		// Price routes (public)
 		priceHandler.RegisterRoutes(v1)
+
+		// Trading routes (protected)
+		tradingHandler.RegisterRoutes(v1, authMiddleware)
 	}
 
 	// Create HTTP server
