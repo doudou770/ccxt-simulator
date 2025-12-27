@@ -2,7 +2,7 @@
 
 基于真实市场价格的加密货币合约交易模拟器。
 
-![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat&logo=go)
+![Go Version](https://img.shields.io/badge/Go-1.24+-00ADD8?style=flat&logo=go)
 ![License](https://img.shields.io/badge/License-MIT-green)
 ![Exchanges](https://img.shields.io/badge/Exchanges-5-blue)
 
@@ -33,7 +33,7 @@
 
 ### 环境要求
 
-- Go 1.21+
+- Go 1.23+
 - PostgreSQL 15+
 - Redis 7+
 
