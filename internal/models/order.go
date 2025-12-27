@@ -10,11 +10,12 @@ import (
 type OrderType string
 
 const (
-	OrderTypeMarket     OrderType = "MARKET"
-	OrderTypeLimit      OrderType = "LIMIT"
-	OrderTypeStopLoss   OrderType = "STOP_LOSS"
-	OrderTypeTakeProfit OrderType = "TAKE_PROFIT"
-	OrderTypeStopMarket OrderType = "STOP_MARKET"
+	OrderTypeMarket       OrderType = "MARKET"
+	OrderTypeLimit        OrderType = "LIMIT"
+	OrderTypeStopLoss     OrderType = "STOP_LOSS"
+	OrderTypeTakeProfit   OrderType = "TAKE_PROFIT"
+	OrderTypeStopMarket   OrderType = "STOP_MARKET"
+	OrderTypeTrailingStop OrderType = "TRAILING_STOP_MARKET"
 )
 
 // OrderSide represents the order side

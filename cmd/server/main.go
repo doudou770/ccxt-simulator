@@ -122,8 +122,12 @@ func main() {
 	// Exchange-compatible API routes
 	// These endpoints mirror the original exchange APIs for compatibility
 
+	// Initialize ExchangeInfoService for caching exchange data
+	exchangeInfoService := service.NewExchangeInfoService(rdb)
+	go exchangeInfoService.Start(context.Background())
+
 	// Binance compatible routes (/fapi/v1/*, /fapi/v2/*)
-	binanceHandler := exchangeBinance.NewHandler(tradingService, priceService)
+	binanceHandler := exchangeBinance.NewHandler(tradingService, priceService, exchangeInfoService)
 	binanceAuthMiddleware := middleware.BinanceAuthMiddleware(accountService, cfg.Encryption.AESKey)
 	binanceHandler.RegisterRoutes(router, binanceAuthMiddleware)
 

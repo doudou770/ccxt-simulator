@@ -389,4 +389,4 @@ ccxt-simulator/
 
 ## License
 
-MIT
+Apache version 2.0

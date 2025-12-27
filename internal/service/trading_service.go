@@ -77,12 +77,15 @@ type OpenPositionRequest struct {
 
 // ClosePositionRequest represents a request to close a position
 type ClosePositionRequest struct {
-	AccountID uint                `json:"account_id"`
-	Symbol    string              `json:"symbol" binding:"required"`
-	Side      models.PositionSide `json:"side"`
-	Quantity  *float64            `json:"quantity"` // nil means close all
-	OrderType models.OrderType    `json:"order_type"`
-	Price     float64             `json:"price"` // For limit orders
+	AccountID     uint                `json:"account_id"`
+	Symbol        string              `json:"symbol" binding:"required"`
+	Side          models.PositionSide `json:"side"`
+	Quantity      *float64            `json:"quantity"` // nil means close all
+	OrderType     models.OrderType    `json:"order_type"`
+	Price         float64             `json:"price"`      // For limit orders
+	StopPrice     float64             `json:"stop_price"` // For SL/TP orders
+	ClosePosition bool                `json:"close_position"`
+	ReduceOnly    bool                `json:"reduce_only"`
 }
 
 // OpenPosition opens a new position or adds to an existing one
@@ -557,4 +560,35 @@ func (s *TradingService) roundPrice(price float64, symbolInfo *exchange.SymbolIn
 	}
 	precision := math.Pow(10, float64(symbolInfo.PricePrecision))
 	return math.Round(price*precision) / precision
+}
+
+// GetOpenOrders returns all open orders for an account
+func (s *TradingService) GetOpenOrders(accountID uint, symbol string) ([]models.Order, error) {
+	if symbol != "" {
+		return s.orderRepo.GetOpenOrdersBySymbol(accountID, symbol)
+	}
+	return s.orderRepo.GetOpenOrders(accountID)
+}
+
+// GetOpenAlgoOrders returns all open algo orders (SL/TP) for an account
+func (s *TradingService) GetOpenAlgoOrders(accountID uint, symbol string) ([]models.Order, error) {
+	orderTypes := []models.OrderType{
+		models.OrderTypeStopMarket,
+		models.OrderTypeTakeProfit,
+		models.OrderTypeTrailingStop,
+	}
+	if symbol != "" {
+		return s.orderRepo.GetOpenOrdersBySymbolAndTypes(accountID, symbol, orderTypes)
+	}
+	return s.orderRepo.GetOpenOrdersByTypes(accountID, orderTypes)
+}
+
+// CancelAllAlgoOrders cancels all open algo orders
+func (s *TradingService) CancelAllAlgoOrders(accountID uint, symbol string) (int64, error) {
+	orderTypes := []models.OrderType{
+		models.OrderTypeStopMarket,
+		models.OrderTypeTakeProfit,
+		models.OrderTypeTrailingStop,
+	}
+	return s.orderRepo.CancelOpenOrdersByTypes(accountID, symbol, orderTypes)
 }
