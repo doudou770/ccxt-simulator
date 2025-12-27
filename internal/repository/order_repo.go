@@ -168,3 +168,39 @@ func (r *OrderRepository) GetOrdersAfter(accountID uint, after time.Time, limit 
 		Find(&orders)
 	return orders, result.Error
 }
+
+// GetOpenOrdersByTypes retrieves open orders of specific types
+func (r *OrderRepository) GetOpenOrdersByTypes(accountID uint, orderTypes []models.OrderType) ([]models.Order, error) {
+	var orders []models.Order
+	result := r.db.Where("account_id = ? AND status IN ? AND type IN ?", accountID,
+		[]models.OrderStatus{models.OrderStatusNew, models.OrderStatusPartiallyFilled},
+		orderTypes).Find(&orders)
+	return orders, result.Error
+}
+
+// GetOpenOrdersBySymbolAndTypes retrieves open orders of specific types for a symbol
+func (r *OrderRepository) GetOpenOrdersBySymbolAndTypes(accountID uint, symbol string, orderTypes []models.OrderType) ([]models.Order, error) {
+	var orders []models.Order
+	result := r.db.Where("account_id = ? AND symbol = ? AND status IN ? AND type IN ?", accountID, symbol,
+		[]models.OrderStatus{models.OrderStatusNew, models.OrderStatusPartiallyFilled},
+		orderTypes).Find(&orders)
+	return orders, result.Error
+}
+
+// CancelOpenOrdersByTypes cancels open orders of specific types
+func (r *OrderRepository) CancelOpenOrdersByTypes(accountID uint, symbol string, orderTypes []models.OrderType) (int64, error) {
+	query := r.db.Model(&models.Order{}).
+		Where("account_id = ? AND status IN ? AND type IN ?", accountID,
+			[]models.OrderStatus{models.OrderStatusNew, models.OrderStatusPartiallyFilled},
+			orderTypes)
+
+	if symbol != "" {
+		query = query.Where("symbol = ?", symbol)
+	}
+
+	result := query.Updates(map[string]interface{}{
+		"status":     models.OrderStatusCanceled,
+		"updated_at": time.Now(),
+	})
+	return result.RowsAffected, result.Error
+}

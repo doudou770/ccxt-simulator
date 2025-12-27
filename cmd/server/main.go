@@ -28,6 +28,13 @@ import (
 	"gorm.io/gorm/logger"
 )
 
+// Build info (injected at build time via -ldflags)
+var (
+	Version   = "dev"
+	Commit    = "unknown"
+	BuildTime = "unknown"
+)
+
 func main() {
 	// Load configuration
 	cfg, err := config.Load("config.yaml")
@@ -96,9 +103,12 @@ func main() {
 	// Health check endpoint
 	router.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
-			"status":    "ok",
-			"time":      time.Now().Unix(),
-			"exchanges": priceService.GetExchangeStatus(),
+			"status":     "ok",
+			"version":    Version,
+			"commit":     Commit,
+			"build_time": BuildTime,
+			"time":       time.Now().Unix(),
+			"exchanges":  priceService.GetExchangeStatus(),
 		})
 	})
 
@@ -122,28 +132,32 @@ func main() {
 	// Exchange-compatible API routes
 	// These endpoints mirror the original exchange APIs for compatibility
 
+	// Initialize ExchangeInfoService for caching exchange data
+	exchangeInfoService := service.NewExchangeInfoService(rdb)
+	go exchangeInfoService.Start(context.Background())
+
 	// Binance compatible routes (/fapi/v1/*, /fapi/v2/*)
-	binanceHandler := exchangeBinance.NewHandler(tradingService, priceService)
+	binanceHandler := exchangeBinance.NewHandler(tradingService, priceService, exchangeInfoService)
 	binanceAuthMiddleware := middleware.BinanceAuthMiddleware(accountService, cfg.Encryption.AESKey)
 	binanceHandler.RegisterRoutes(router, binanceAuthMiddleware)
 
 	// OKX compatible routes (/api/v5/*)
-	okxHandler := exchangeOKX.NewHandler(tradingService, priceService)
+	okxHandler := exchangeOKX.NewHandler(tradingService, priceService, exchangeInfoService)
 	okxAuthMiddleware := middleware.OKXAuthMiddleware(accountService, cfg.Encryption.AESKey)
 	okxHandler.RegisterRoutes(router, okxAuthMiddleware)
 
 	// Bybit compatible routes (/v5/*)
-	bybitHandler := exchangeBybit.NewHandler(tradingService, priceService)
+	bybitHandler := exchangeBybit.NewHandler(tradingService, priceService, exchangeInfoService)
 	bybitAuthMiddleware := middleware.BybitAuthMiddleware(accountService, cfg.Encryption.AESKey)
 	bybitHandler.RegisterRoutes(router, bybitAuthMiddleware)
 
 	// Bitget compatible routes (/api/v2/mix/*)
-	bitgetHandler := exchangeBitget.NewHandler(tradingService, priceService)
+	bitgetHandler := exchangeBitget.NewHandler(tradingService, priceService, exchangeInfoService)
 	bitgetAuthMiddleware := middleware.BitgetAuthMiddleware(accountService, cfg.Encryption.AESKey)
 	bitgetHandler.RegisterRoutes(router, bitgetAuthMiddleware)
 
 	// Hyperliquid compatible routes (/info, /exchange)
-	hyperliquidHandler := exchangeHyperliquid.NewHandler(tradingService, priceService)
+	hyperliquidHandler := exchangeHyperliquid.NewHandler(tradingService, priceService, exchangeInfoService)
 	hyperliquidAuthMiddleware := middleware.HyperliquidAuthMiddleware(accountService, cfg.Encryption.AESKey)
 	hyperliquidHandler.RegisterRoutes(router, hyperliquidAuthMiddleware)
 

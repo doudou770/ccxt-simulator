@@ -59,7 +59,7 @@ docker run -d --name redis \
 ```yaml
 server:
   host: "0.0.0.0"
-  port: 8080
+  port: 11188
 
 database:
   host: "localhost"
@@ -97,27 +97,134 @@ go build -o bin/server.exe ./cmd/server
 
 ---
 
+## 🐳 Docker 部署
+
+### 快速部署 (推荐)
+
+使用 docker-compose 一键部署（包含 PostgreSQL + Redis）:
+
+```bash
+# 克隆项目
+git clone https://github.com/your-username/ccxt-simulator.git
+cd ccxt-simulator
+
+# 创建环境变量文件
+cat > .env << EOF
+DB_PASSWORD=your_secure_password
+REDIS_PASSWORD=your_redis_password
+JWT_SECRET=your-super-secret-jwt-key
+AES_KEY=ccxt-simulator-32bytes-aes-key!!
+EOF
+
+# 启动所有服务
+docker-compose up -d
+
+# 查看日志
+docker-compose logs -f ccxt-simulator
+
+# 停止服务
+docker-compose down
+```
+
+### 仅部署应用
+
+如果已有 PostgreSQL 和 Redis，可单独部署应用:
+
+```bash
+# 拉取镜像
+docker pull ghcr.io/your-username/ccxt-simulator:latest
+
+# 运行容器
+docker run -d \
+  --name ccxt-simulator \
+  -p 11188:11188 \
+  -v $(pwd)/config.yaml:/app/config.yaml:ro \
+  -e DATABASE_HOST=your_postgres_host \
+  -e REDIS_HOST=your_redis_host \
+  ghcr.io/your-username/ccxt-simulator:latest
+```
+
+### 本地构建镜像
+
+```bash
+# 构建镜像
+docker build -t ccxt-simulator:local \
+  --build-arg VERSION=v1.0.0 \
+  --build-arg COMMIT=$(git rev-parse --short HEAD) \
+  --build-arg BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
+  .
+
+# 运行本地镜像
+docker run -d -p 11188:11188 ccxt-simulator:local
+```
+
+### 健康检查
+
+```bash
+# 检查服务状态
+curl http://localhost:11188/health
+```
+
+响应示例:
+```json
+{
+  "status": "ok",
+  "version": "v1.0.0",
+  "commit": "abc1234",
+  "build_time": "2024-12-28T00:00:00Z",
+  "time": 1703721600,
+  "exchanges": {
+    "binance": true,
+    "okx": true,
+    "bybit": true,
+    "bitget": true,
+    "hyperliquid": true
+  }
+}
+```
+
+### GitHub Actions 自动构建
+
+推送代码到 GitHub 后会自动:
+1. 运行测试
+2. 构建 Docker 镜像
+3. 推送到 GitHub Container Registry
+4. 自动递增版本号
+
+| 触发条件 | 版本格式 |
+|----------|----------|
+| Tag 推送 (`v1.0.0`) | `v1.0.0` |
+| main 分支推送 | `v1.0.1-abc1234` |
+| 手动触发 | 自定义版本 |
+
+拉取最新镜像:
+```bash
+docker pull ghcr.io/your-username/ccxt-simulator:latest
+```
+
+---
+
 ## 📡 API 使用指南
 
 ### 1. 管理 API（用户认证）
 
 #### 注册用户
 ```bash
-curl -X POST http://localhost:8080/api/v1/auth/register \
+curl -X POST http://localhost:11188/api/v1/auth/register \
   -H "Content-Type: application/json" \
   -d '{"username": "trader", "email": "trader@example.com", "password": "password123"}'
 ```
 
 #### 登录获取 Token
 ```bash
-curl -X POST http://localhost:8080/api/v1/auth/login \
+curl -X POST http://localhost:11188/api/v1/auth/login \
   -H "Content-Type: application/json" \
   -d '{"username": "trader", "password": "password123"}'
 ```
 
 #### 创建模拟账户
 ```bash
-curl -X POST http://localhost:8080/api/v1/accounts \
+curl -X POST http://localhost:11188/api/v1/accounts \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <your_token>" \
   -d '{"exchange_type": "binance", "initial_balance": 10000}'
@@ -142,21 +249,21 @@ curl -X POST http://localhost:8080/api/v1/accounts \
 
 #### 开多仓
 ```bash
-curl -X POST http://localhost:8080/api/v1/trading/1/open-long \
+curl -X POST http://localhost:11188/api/v1/trading/1/open-long \
   -H "Authorization: Bearer <token>" \
   -d '{"symbol": "BTCUSDT", "quantity": 0.01, "leverage": 10}'
 ```
 
 #### 平仓
 ```bash
-curl -X POST http://localhost:8080/api/v1/trading/1/close-long \
+curl -X POST http://localhost:11188/api/v1/trading/1/close-long \
   -H "Authorization: Bearer <token>" \
   -d '{"symbol": "BTCUSDT"}'
 ```
 
 #### 查看余额
 ```bash
-curl http://localhost:8080/api/v1/trading/1/balance \
+curl http://localhost:11188/api/v1/trading/1/balance \
   -H "Authorization: Bearer <token>"
 ```
 
@@ -167,7 +274,7 @@ curl http://localhost:8080/api/v1/trading/1/balance \
 #### Binance 兼容
 ```diff
 - base_url: https://fapi.binance.com
-+ base_url: http://localhost:8080
++ base_url: http://localhost:11188
 
 # 使用创建账户时获得的 API Key
 api_key: mkNF2p4zmgBHWmrHs0BOxxxx
@@ -176,18 +283,18 @@ api_secret: xxxxxxxxxxxxxxxxxxxx
 
 ```bash
 # 获取余额
-curl "http://localhost:8080/fapi/v2/balance?timestamp=1234567890&signature=xxx" \
+curl "http://localhost:11188/fapi/v2/balance?timestamp=1234567890&signature=xxx" \
   -H "X-MBX-APIKEY: <your_api_key>"
 
 # 下单
-curl -X POST "http://localhost:8080/fapi/v1/order" \
+curl -X POST "http://localhost:11188/fapi/v1/order" \
   -H "X-MBX-APIKEY: <your_api_key>" \
   -d "symbol=BTCUSDT&side=BUY&type=MARKET&quantity=0.01&timestamp=xxx&signature=xxx"
 ```
 
 #### OKX 兼容
 ```bash
-curl "http://localhost:8080/api/v5/account/balance" \
+curl "http://localhost:11188/api/v5/account/balance" \
   -H "OK-ACCESS-KEY: <api_key>" \
   -H "OK-ACCESS-SIGN: <signature>" \
   -H "OK-ACCESS-TIMESTAMP: <timestamp>" \
@@ -196,7 +303,7 @@ curl "http://localhost:8080/api/v5/account/balance" \
 
 #### Bybit 兼容
 ```bash
-curl "http://localhost:8080/v5/account/wallet-balance?accountType=UNIFIED" \
+curl "http://localhost:11188/v5/account/wallet-balance?accountType=UNIFIED" \
   -H "X-BAPI-API-KEY: <api_key>" \
   -H "X-BAPI-SIGN: <signature>" \
   -H "X-BAPI-TIMESTAMP: <timestamp>"
@@ -204,7 +311,7 @@ curl "http://localhost:8080/v5/account/wallet-balance?accountType=UNIFIED" \
 
 #### Bitget 兼容
 ```bash
-curl "http://localhost:8080/api/v2/mix/account/account?marginCoin=USDT" \
+curl "http://localhost:11188/api/v2/mix/account/account?marginCoin=USDT" \
   -H "ACCESS-KEY: <api_key>" \
   -H "ACCESS-SIGN: <signature>" \
   -H "ACCESS-TIMESTAMP: <timestamp>"
@@ -213,12 +320,12 @@ curl "http://localhost:8080/api/v2/mix/account/account?marginCoin=USDT" \
 #### Hyperliquid 兼容
 ```bash
 # 获取元数据
-curl -X POST "http://localhost:8080/info" \
+curl -X POST "http://localhost:11188/info" \
   -H "Content-Type: application/json" \
   -d '{"type": "meta"}'
 
 # 获取所有价格
-curl -X POST "http://localhost:8080/info" \
+curl -X POST "http://localhost:11188/info" \
   -d '{"type": "allMids"}'
 ```
 
@@ -330,40 +437,79 @@ ccxt-simulator/
 ### Binance 兼容 API
 | 方法 | 路径 | 说明 |
 |------|------|------|
+| GET | `/fapi/v1/time` | 服务器时间 |
+| GET | `/fapi/v1/exchangeInfo` | 交易所信息 (缓存) |
+| GET | `/fapi/v2/account` | 完整账户信息 |
 | GET | `/fapi/v2/balance` | 账户余额 |
 | GET | `/fapi/v2/positionRisk` | 持仓风险 |
+| GET | `/fapi/v2/ticker/price` | 价格行情 |
 | POST | `/fapi/v1/order` | 下单 |
+| GET | `/fapi/v1/order` | 查询订单 |
 | DELETE | `/fapi/v1/order` | 撤单 |
+| GET | `/fapi/v1/openOrders` | 获取挂单 |
+| DELETE | `/fapi/v1/allOpenOrders` | 撤销所有挂单 |
 | POST | `/fapi/v1/leverage` | 设置杠杆 |
+| POST | `/fapi/v1/marginType` | 设置保证金模式 |
+| POST | `/fapi/v1/algoOrder` | **创建 SL/TP 委托** |
+| DELETE | `/fapi/v1/algoOrder` | **取消 SL/TP 委托** |
+| GET | `/fapi/v1/openAlgoOrders` | **获取 SL/TP 挂单** |
+| DELETE | `/fapi/v1/allOpenAlgoOrders` | **取消所有 SL/TP** |
 
 ### OKX 兼容 API
 | 方法 | 路径 | 说明 |
 |------|------|------|
+| GET | `/api/v5/public/time` | 服务器时间 |
+| GET | `/api/v5/public/instruments` | 产品信息 (缓存) |
+| GET | `/api/v5/public/mark-price` | 标记价格 |
+| GET | `/api/v5/market/tickers` | 所有行情 |
 | GET | `/api/v5/account/balance` | 账户余额 |
 | GET | `/api/v5/account/positions` | 持仓 |
-| POST | `/api/v5/trade/order` | 下单 |
 | POST | `/api/v5/account/set-leverage` | 设置杠杆 |
+| POST | `/api/v5/trade/order` | 下单 |
+| POST | `/api/v5/trade/cancel-order` | 撤单 |
+| POST | `/api/v5/trade/cancel-batch-orders` | 批量撤单 |
+| GET | `/api/v5/trade/orders-pending` | 获取挂单 |
+| POST | `/api/v5/trade/order-algo` | **创建 SL/TP 委托** |
+| POST | `/api/v5/trade/cancel-algos` | **取消 SL/TP 委托** |
+| GET | `/api/v5/trade/orders-algo-pending` | **获取 SL/TP 挂单** |
 
 ### Bybit 兼容 API
 | 方法 | 路径 | 说明 |
 |------|------|------|
+| GET | `/v5/market/time` | 服务器时间 |
+| GET | `/v5/market/instruments-info` | 产品信息 (缓存) |
+| GET | `/v5/market/tickers` | 行情 |
 | GET | `/v5/account/wallet-balance` | 钱包余额 |
 | GET | `/v5/position/list` | 持仓列表 |
-| POST | `/v5/order/create` | 创建订单 |
 | POST | `/v5/position/set-leverage` | 设置杠杆 |
+| POST | `/v5/position/trading-stop` | **设置 SL/TP** |
+| POST | `/v5/order/create` | 创建订单 |
+| POST | `/v5/order/cancel` | 取消订单 |
+| POST | `/v5/order/cancel-all` | 取消所有订单 |
+| GET | `/v5/order/realtime` | 获取挂单 |
 
 ### Bitget 兼容 API
 | 方法 | 路径 | 说明 |
 |------|------|------|
+| GET | `/api/v2/public/time` | 服务器时间 |
+| GET | `/api/v2/mix/market/contracts` | 合约信息 (缓存) |
+| GET | `/api/v2/mix/market/ticker` | 行情 |
 | GET | `/api/v2/mix/account/account` | 账户信息 |
+| POST | `/api/v2/mix/account/set-leverage` | 设置杠杆 |
 | GET | `/api/v2/mix/position/all-position` | 所有持仓 |
 | POST | `/api/v2/mix/order/place-order` | 下单 |
+| POST | `/api/v2/mix/order/cancel-order` | 撤单 |
+| POST | `/api/v2/mix/order/cancel-all-orders` | 撤销所有订单 |
+| GET | `/api/v2/mix/order/orders-pending` | 获取挂单 |
+| POST | `/api/v2/mix/order/place-plan-order` | **创建 SL/TP 委托** |
+| POST | `/api/v2/mix/order/cancel-plan-order` | **取消 SL/TP 委托** |
+| GET | `/api/v2/mix/order/orders-plan-pending` | **获取 SL/TP 挂单** |
 
 ### Hyperliquid 兼容 API
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/info` | 查询信息 (allMids/meta/clearinghouseState) |
-| POST | `/exchange` | 交易操作 (order/cancel/updateLeverage) |
+| POST | `/info` | 查询信息 (allMids/meta/clearinghouseState/**openOrders**) |
+| POST | `/exchange` | 交易操作 (order/cancel/updateLeverage/**TP/SL trigger**) |
 
 ---
 
@@ -389,4 +535,4 @@ ccxt-simulator/
 
 ## License
 
-MIT
+Apache version 2.0
