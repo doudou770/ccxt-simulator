@@ -12,6 +12,9 @@ import (
 
 	"github.com/ccxt-simulator/internal/config"
 	"github.com/ccxt-simulator/internal/handler"
+	exchangeBinance "github.com/ccxt-simulator/internal/handler/exchange/binance"
+	exchangeBybit "github.com/ccxt-simulator/internal/handler/exchange/bybit"
+	exchangeOKX "github.com/ccxt-simulator/internal/handler/exchange/okx"
 	"github.com/ccxt-simulator/internal/middleware"
 	"github.com/ccxt-simulator/internal/models"
 	"github.com/ccxt-simulator/internal/repository"
@@ -113,6 +116,24 @@ func main() {
 		// Trading routes (protected)
 		tradingHandler.RegisterRoutes(v1, authMiddleware)
 	}
+
+	// Exchange-compatible API routes
+	// These endpoints mirror the original exchange APIs for compatibility
+
+	// Binance compatible routes (/fapi/v1/*, /fapi/v2/*)
+	binanceHandler := exchangeBinance.NewHandler(tradingService, priceService)
+	binanceAuthMiddleware := middleware.BinanceAuthMiddleware(accountService, cfg.Encryption.AESKey)
+	binanceHandler.RegisterRoutes(router, binanceAuthMiddleware)
+
+	// OKX compatible routes (/api/v5/*)
+	okxHandler := exchangeOKX.NewHandler(tradingService, priceService)
+	okxAuthMiddleware := middleware.OKXAuthMiddleware(accountService, cfg.Encryption.AESKey)
+	okxHandler.RegisterRoutes(router, okxAuthMiddleware)
+
+	// Bybit compatible routes (/v5/*)
+	bybitHandler := exchangeBybit.NewHandler(tradingService, priceService)
+	bybitAuthMiddleware := middleware.BybitAuthMiddleware(accountService, cfg.Encryption.AESKey)
+	bybitHandler.RegisterRoutes(router, bybitAuthMiddleware)
 
 	// Create HTTP server
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)

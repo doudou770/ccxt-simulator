@@ -1,0 +1,411 @@
+package middleware
+
+import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"fmt"
+	"net/url"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/ccxt-simulator/internal/models"
+	"github.com/ccxt-simulator/internal/service"
+	"github.com/ccxt-simulator/pkg/crypto"
+	"github.com/gin-gonic/gin"
+)
+
+const (
+	// ContextKeyAccount is the key for account in gin context
+	ContextKeyAccount = "exchange_account"
+	// ContextKeyAPISecret is the key for API secret in gin context
+	ContextKeyAPISecret = "api_secret"
+)
+
+// ExchangeAuthConfig holds configuration for exchange authentication
+type ExchangeAuthConfig struct {
+	AESKey string
+}
+
+// BinanceAuthMiddleware creates authentication middleware for Binance API
+func BinanceAuthMiddleware(accountService *service.AccountService, aesKey string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Get API key from header
+		apiKey := c.GetHeader("X-MBX-APIKEY")
+		if apiKey == "" {
+			c.JSON(401, gin.H{
+				"code": -2015,
+				"msg":  "Invalid API-key, IP, or permissions for action.",
+			})
+			c.Abort()
+			return
+		}
+
+		// Find account by API key
+		account, err := accountService.GetAccountByAPIKey(apiKey)
+		if err != nil {
+			c.JSON(401, gin.H{
+				"code": -2015,
+				"msg":  "Invalid API-key, IP, or permissions for action.",
+			})
+			c.Abort()
+			return
+		}
+
+		// Verify this is a Binance account
+		if account.ExchangeType != models.ExchangeBinance {
+			c.JSON(401, gin.H{
+				"code": -2015,
+				"msg":  "API key is not for Binance.",
+			})
+			c.Abort()
+			return
+		}
+
+		// Decrypt API secret
+		apiSecret, err := crypto.DecryptAES(account.APISecretEncrypted, aesKey)
+		if err != nil {
+			c.JSON(500, gin.H{
+				"code": -1,
+				"msg":  "Internal error.",
+			})
+			c.Abort()
+			return
+		}
+
+		// Verify signature for POST/PUT/DELETE requests
+		if c.Request.Method != "GET" || c.Query("signature") != "" {
+			if !verifyBinanceSignature(c, apiSecret) {
+				c.JSON(401, gin.H{
+					"code": -1022,
+					"msg":  "Signature for this request is not valid.",
+				})
+				c.Abort()
+				return
+			}
+		}
+
+		// Verify timestamp (within 5 minutes)
+		if timestamp := c.Query("timestamp"); timestamp != "" {
+			ts, err := strconv.ParseInt(timestamp, 10, 64)
+			if err != nil || abs(time.Now().UnixMilli()-ts) > 300000 {
+				c.JSON(400, gin.H{
+					"code": -1021,
+					"msg":  "Timestamp for this request was 1000ms ahead of the server's time.",
+				})
+				c.Abort()
+				return
+			}
+		}
+
+		// Store account in context
+		c.Set(ContextKeyAccount, account)
+		c.Set(ContextKeyAPISecret, apiSecret)
+		c.Next()
+	}
+}
+
+// verifyBinanceSignature verifies the HMAC-SHA256 signature for Binance
+func verifyBinanceSignature(c *gin.Context, apiSecret string) bool {
+	providedSig := c.Query("signature")
+	if providedSig == "" {
+		// Try form data
+		providedSig = c.PostForm("signature")
+	}
+	if providedSig == "" {
+		return false
+	}
+
+	// Build query string (excluding signature)
+	params := make(url.Values)
+
+	// Add query parameters
+	for key, values := range c.Request.URL.Query() {
+		if key != "signature" {
+			params[key] = values
+		}
+	}
+
+	// Add form parameters for POST
+	if c.Request.Method == "POST" {
+		c.Request.ParseForm()
+		for key, values := range c.Request.PostForm {
+			if key != "signature" {
+				params[key] = values
+			}
+		}
+	}
+
+	// Sort and encode
+	queryString := sortedEncode(params)
+
+	// Calculate signature
+	mac := hmac.New(sha256.New, []byte(apiSecret))
+	mac.Write([]byte(queryString))
+	expectedSig := hex.EncodeToString(mac.Sum(nil))
+
+	return hmac.Equal([]byte(providedSig), []byte(expectedSig))
+}
+
+// OKXAuthMiddleware creates authentication middleware for OKX API
+func OKXAuthMiddleware(accountService *service.AccountService, aesKey string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Get headers
+		apiKey := c.GetHeader("OK-ACCESS-KEY")
+		timestamp := c.GetHeader("OK-ACCESS-TIMESTAMP")
+		sign := c.GetHeader("OK-ACCESS-SIGN")
+		passphrase := c.GetHeader("OK-ACCESS-PASSPHRASE")
+
+		if apiKey == "" || timestamp == "" || sign == "" || passphrase == "" {
+			c.JSON(401, gin.H{
+				"code": "50111",
+				"msg":  "Invalid credentials.",
+			})
+			c.Abort()
+			return
+		}
+
+		// Find account by API key
+		account, err := accountService.GetAccountByAPIKey(apiKey)
+		if err != nil {
+			c.JSON(401, gin.H{
+				"code": "50111",
+				"msg":  "Invalid API Key.",
+			})
+			c.Abort()
+			return
+		}
+
+		// Verify this is an OKX account
+		if account.ExchangeType != models.ExchangeOKX {
+			c.JSON(401, gin.H{
+				"code": "50111",
+				"msg":  "API key is not for OKX.",
+			})
+			c.Abort()
+			return
+		}
+
+		// Decrypt API secret and passphrase
+		apiSecret, err := crypto.DecryptAES(account.APISecretEncrypted, aesKey)
+		if err != nil {
+			c.JSON(500, gin.H{
+				"code": "50000",
+				"msg":  "Internal error.",
+			})
+			c.Abort()
+			return
+		}
+
+		storedPassphrase, err := crypto.DecryptAES(account.PassphraseEncrypted, aesKey)
+		if err != nil {
+			c.JSON(500, gin.H{
+				"code": "50000",
+				"msg":  "Internal error.",
+			})
+			c.Abort()
+			return
+		}
+
+		// Verify passphrase
+		if passphrase != storedPassphrase {
+			c.JSON(401, gin.H{
+				"code": "50113",
+				"msg":  "Invalid passphrase.",
+			})
+			c.Abort()
+			return
+		}
+
+		// Verify signature
+		if !verifyOKXSignature(c, timestamp, apiSecret) {
+			c.JSON(401, gin.H{
+				"code": "50113",
+				"msg":  "Invalid signature.",
+			})
+			c.Abort()
+			return
+		}
+
+		// Store account in context
+		c.Set(ContextKeyAccount, account)
+		c.Set(ContextKeyAPISecret, apiSecret)
+		c.Next()
+	}
+}
+
+// verifyOKXSignature verifies the HMAC-SHA256 + Base64 signature for OKX
+func verifyOKXSignature(c *gin.Context, timestamp, apiSecret string) bool {
+	sign := c.GetHeader("OK-ACCESS-SIGN")
+	if sign == "" {
+		return false
+	}
+
+	// Build prehash string: timestamp + method + requestPath + body
+	method := c.Request.Method
+	requestPath := c.Request.URL.Path
+	if c.Request.URL.RawQuery != "" {
+		requestPath += "?" + c.Request.URL.RawQuery
+	}
+
+	var body string
+	if method == "POST" || method == "PUT" {
+		// Read body
+		bodyBytes, _ := c.GetRawData()
+		body = string(bodyBytes)
+	}
+
+	prehash := timestamp + method + requestPath + body
+
+	// Calculate signature
+	mac := hmac.New(sha256.New, []byte(apiSecret))
+	mac.Write([]byte(prehash))
+	expectedSig := base64.StdEncoding.EncodeToString(mac.Sum(nil))
+
+	return hmac.Equal([]byte(sign), []byte(expectedSig))
+}
+
+// BybitAuthMiddleware creates authentication middleware for Bybit API
+func BybitAuthMiddleware(accountService *service.AccountService, aesKey string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Get headers
+		apiKey := c.GetHeader("X-BAPI-API-KEY")
+		timestamp := c.GetHeader("X-BAPI-TIMESTAMP")
+		sign := c.GetHeader("X-BAPI-SIGN")
+		recvWindow := c.GetHeader("X-BAPI-RECV-WINDOW")
+
+		if apiKey == "" || timestamp == "" || sign == "" {
+			c.JSON(10003, gin.H{
+				"retCode": 10003,
+				"retMsg":  "Invalid apiKey.",
+			})
+			c.Abort()
+			return
+		}
+
+		// Find account by API key
+		account, err := accountService.GetAccountByAPIKey(apiKey)
+		if err != nil {
+			c.JSON(401, gin.H{
+				"retCode": 10003,
+				"retMsg":  "Invalid apiKey.",
+			})
+			c.Abort()
+			return
+		}
+
+		// Verify this is a Bybit account
+		if account.ExchangeType != models.ExchangeBybit {
+			c.JSON(401, gin.H{
+				"retCode": 10003,
+				"retMsg":  "API key is not for Bybit.",
+			})
+			c.Abort()
+			return
+		}
+
+		// Decrypt API secret
+		apiSecret, err := crypto.DecryptAES(account.APISecretEncrypted, aesKey)
+		if err != nil {
+			c.JSON(500, gin.H{
+				"retCode": 10000,
+				"retMsg":  "Internal error.",
+			})
+			c.Abort()
+			return
+		}
+
+		// Verify signature
+		if !verifyBybitSignature(c, apiKey, timestamp, recvWindow, apiSecret) {
+			c.JSON(401, gin.H{
+				"retCode": 10004,
+				"retMsg":  "Invalid sign.",
+			})
+			c.Abort()
+			return
+		}
+
+		// Store account in context
+		c.Set(ContextKeyAccount, account)
+		c.Set(ContextKeyAPISecret, apiSecret)
+		c.Next()
+	}
+}
+
+// verifyBybitSignature verifies the HMAC-SHA256 signature for Bybit
+func verifyBybitSignature(c *gin.Context, apiKey, timestamp, recvWindow, apiSecret string) bool {
+	sign := c.GetHeader("X-BAPI-SIGN")
+	if sign == "" {
+		return false
+	}
+
+	// Build param string
+	var paramStr string
+	if c.Request.Method == "GET" {
+		paramStr = c.Request.URL.RawQuery
+	} else {
+		bodyBytes, _ := c.GetRawData()
+		paramStr = string(bodyBytes)
+	}
+
+	// Prehash: timestamp + apiKey + recvWindow + paramStr
+	prehash := timestamp + apiKey + recvWindow + paramStr
+
+	// Calculate signature
+	mac := hmac.New(sha256.New, []byte(apiSecret))
+	mac.Write([]byte(prehash))
+	expectedSig := hex.EncodeToString(mac.Sum(nil))
+
+	return hmac.Equal([]byte(sign), []byte(expectedSig))
+}
+
+// Helper functions
+
+func sortedEncode(params url.Values) string {
+	if len(params) == 0 {
+		return ""
+	}
+
+	keys := make([]string, 0, len(params))
+	for key := range params {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	var pairs []string
+	for _, key := range keys {
+		for _, value := range params[key] {
+			pairs = append(pairs, fmt.Sprintf("%s=%s", key, value))
+		}
+	}
+
+	return strings.Join(pairs, "&")
+}
+
+func abs(n int64) int64 {
+	if n < 0 {
+		return -n
+	}
+	return n
+}
+
+// GetAccount retrieves the account from gin context
+func GetAccount(c *gin.Context) *models.Account {
+	account, exists := c.Get(ContextKeyAccount)
+	if !exists {
+		return nil
+	}
+	return account.(*models.Account)
+}
+
+// GetAPISecret retrieves the API secret from gin context
+func GetAPISecret(c *gin.Context) string {
+	secret, exists := c.Get(ContextKeyAPISecret)
+	if !exists {
+		return ""
+	}
+	return secret.(string)
+}
