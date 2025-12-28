@@ -119,28 +119,37 @@ func verifyBinanceSignature(c *gin.Context, apiSecret string) bool {
 		return false
 	}
 
-	// Build query string (excluding signature)
-	params := make(url.Values)
+	var queryString string
 
-	// Add query parameters
-	for key, values := range c.Request.URL.Query() {
-		if key != "signature" {
-			params[key] = values
-		}
-	}
-
-	// Add form parameters for POST
-	if c.Request.Method == "POST" {
+	if c.Request.Method == "POST" || c.Request.Method == "PUT" || c.Request.Method == "DELETE" {
+		// For POST/PUT/DELETE, use form body (excluding signature)
 		c.Request.ParseForm()
+		params := make(url.Values)
 		for key, values := range c.Request.PostForm {
 			if key != "signature" {
 				params[key] = values
 			}
 		}
+		// Also include query parameters
+		for key, values := range c.Request.URL.Query() {
+			if key != "signature" {
+				params[key] = values
+			}
+		}
+		queryString = params.Encode()
+	} else {
+		// For GET requests, use the raw query string (preserving order)
+		rawQuery := c.Request.URL.RawQuery
+		// Remove signature parameter from raw query
+		parts := strings.Split(rawQuery, "&")
+		var filtered []string
+		for _, part := range parts {
+			if !strings.HasPrefix(part, "signature=") {
+				filtered = append(filtered, part)
+			}
+		}
+		queryString = strings.Join(filtered, "&")
 	}
-
-	// Sort and encode
-	queryString := sortedEncode(params)
 
 	// Calculate signature
 	mac := hmac.New(sha256.New, []byte(apiSecret))

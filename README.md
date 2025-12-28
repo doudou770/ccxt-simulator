@@ -105,7 +105,7 @@ go build -o bin/server.exe ./cmd/server
 
 ```bash
 # 克隆项目
-git clone https://github.com/your-username/ccxt-simulator.git
+git clone https://github.com/doudou770/ccxt-simulator.git
 cd ccxt-simulator
 
 # 创建环境变量文件
@@ -132,7 +132,7 @@ docker-compose down
 
 ```bash
 # 拉取镜像
-docker pull ghcr.io/your-username/ccxt-simulator:latest
+docker pull ghcr.io/doudou770/ccxt-simulator:latest
 
 # 运行容器
 docker run -d \
@@ -141,7 +141,7 @@ docker run -d \
   -v $(pwd)/config.yaml:/app/config.yaml:ro \
   -e DATABASE_HOST=your_postgres_host \
   -e REDIS_HOST=your_redis_host \
-  ghcr.io/your-username/ccxt-simulator:latest
+  ghcr.io/doudou770/ccxt-simulator:latest
 ```
 
 ### 本地构建镜像
@@ -199,7 +199,7 @@ curl http://localhost:11188/health
 
 拉取最新镜像:
 ```bash
-docker pull ghcr.io/your-username/ccxt-simulator:latest
+docker pull ghcr.io/doudou770/ccxt-simulator:latest
 ```
 
 ---
