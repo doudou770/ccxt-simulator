@@ -79,6 +79,9 @@ func InitLogger(logDir string) error {
 	infoLogger.Printf("[INFO] Logger initialized, log directory: %s", absLogDir)
 	infoLogger.Printf("[INFO] Log files: app-%s.log, error-%s.log, debug-%s.log", currentDate, currentDate, currentDate)
 
+	// Write a test line to error log to create it
+	errorLogger.Printf("[INFO] Error logger initialized")
+
 	return nil
 }
 
@@ -142,11 +145,17 @@ func RequestLoggerMiddleware() gin.HandlerFunc {
 			if len(bodyPreview) > 500 {
 				bodyPreview = bodyPreview[:500] + "..."
 			}
+			if bodyPreview == "" {
+				bodyPreview = "(empty)"
+			}
 			queryPreview := rawQuery
 			if len(queryPreview) > 500 {
 				queryPreview = queryPreview[:500] + "..."
 			}
-			LogError("%s %s?%s | status=%d | latency=%v | ip=%s | body=%s",
+			if queryPreview == "" {
+				queryPreview = "(empty)"
+			}
+			LogError("%s %s | query=%s | status=%d | latency=%v | ip=%s | body=%s",
 				method, path, queryPreview, statusCode, latency, clientIP, bodyPreview)
 		} else {
 			// Success response - brief log

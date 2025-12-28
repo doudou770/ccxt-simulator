@@ -1,12 +1,13 @@
 package middleware
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
-	"log"
+	"io"
 	"net/url"
 	"sort"
 	"strconv"
@@ -80,8 +81,16 @@ func BinanceAuthMiddleware(accountService *service.AccountService, aesKey string
 		// Verify signature for POST/PUT/DELETE requests
 		if c.Request.Method != "GET" || c.Query("signature") != "" {
 			if !verifyBinanceSignature(c, apiSecret) {
-				log.Printf("[BINANCE] Signature verification failed: method=%s path=%s query=%s",
-					c.Request.Method, c.Request.URL.Path, c.Request.URL.RawQuery)
+				// Read body for logging
+				bodyBytes, _ := io.ReadAll(c.Request.Body)
+				bodyStr := string(bodyBytes)
+				if bodyStr == "" {
+					bodyStr = "(empty)"
+				}
+				c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+
+				LogError("[BINANCE] code=-1022 Signature verification failed: method=%s path=%s query=%s body=%s",
+					c.Request.Method, c.Request.URL.Path, c.Request.URL.RawQuery, bodyStr)
 				c.JSON(401, gin.H{
 					"code": -1022,
 					"msg":  "Signature for this request is not valid.",
@@ -119,57 +128,23 @@ func verifyBinanceSignature(c *gin.Context, apiSecret string) bool {
 		providedSig = c.PostForm("signature")
 	}
 	if providedSig == "" {
-		log.Printf("[BINANCE] No signature provided")
+		LogError("[BINANCE] No signature provided")
 		return false
 	}
 
 	var queryString string
 
-	if c.Request.Method == "POST" || c.Request.Method == "PUT" || c.Request.Method == "DELETE" {
-		// For POST/PUT/DELETE, check if body is form or JSON
-		contentType := c.GetHeader("Content-Type")
-
-		if strings.Contains(contentType, "application/x-www-form-urlencoded") {
-			// Form data
-			c.Request.ParseForm()
-			params := make(url.Values)
-			for key, values := range c.Request.PostForm {
-				if key != "signature" {
-					params[key] = values
-				}
-			}
-			// Also include query parameters
-			for key, values := range c.Request.URL.Query() {
-				if key != "signature" {
-					params[key] = values
-				}
-			}
-			queryString = params.Encode()
-		} else {
-			// For JSON body or no body, use query string
-			rawQuery := c.Request.URL.RawQuery
-			parts := strings.Split(rawQuery, "&")
-			var filtered []string
-			for _, part := range parts {
-				if part != "" && !strings.HasPrefix(part, "signature=") {
-					filtered = append(filtered, part)
-				}
-			}
-			queryString = strings.Join(filtered, "&")
+	// For POST/PUT/DELETE, Binance sends params in query string, not body
+	// The signature is computed over the query string (excluding signature itself)
+	rawQuery := c.Request.URL.RawQuery
+	parts := strings.Split(rawQuery, "&")
+	var filtered []string
+	for _, part := range parts {
+		if part != "" && !strings.HasPrefix(part, "signature=") {
+			filtered = append(filtered, part)
 		}
-	} else {
-		// For GET requests, use the raw query string (preserving order)
-		rawQuery := c.Request.URL.RawQuery
-		// Remove signature parameter from raw query
-		parts := strings.Split(rawQuery, "&")
-		var filtered []string
-		for _, part := range parts {
-			if part != "" && !strings.HasPrefix(part, "signature=") {
-				filtered = append(filtered, part)
-			}
-		}
-		queryString = strings.Join(filtered, "&")
 	}
+	queryString = strings.Join(filtered, "&")
 
 	// Calculate signature
 	mac := hmac.New(sha256.New, []byte(apiSecret))
@@ -178,10 +153,14 @@ func verifyBinanceSignature(c *gin.Context, apiSecret string) bool {
 
 	// Debug logging
 	if providedSig != expectedSig {
-		log.Printf("[BINANCE] Signature mismatch: method=%s path=%s", c.Request.Method, c.Request.URL.Path)
-		log.Printf("[BINANCE] Query string to sign: %s", queryString)
-		log.Printf("[BINANCE] Expected signature: %s", expectedSig)
-		log.Printf("[BINANCE] Provided signature: %s", providedSig)
+		LogError("[BINANCE] Signature mismatch: method=%s path=%s", c.Request.Method, c.Request.URL.Path)
+		LogError("[BINANCE] Raw query: %s", rawQuery)
+		LogError("[BINANCE] Query string to sign: %s", queryString)
+		LogError("[BINANCE] Expected signature: %s", expectedSig)
+		LogError("[BINANCE] Provided signature: %s", providedSig)
+		if len(apiSecret) >= 8 {
+			LogError("[BINANCE] API Secret (first 8 chars): %s***", apiSecret[:8])
+		}
 		return false
 	}
 
