@@ -524,8 +524,21 @@ func (h *Handler) SetLeverage(c *gin.Context) {
 		return
 	}
 
-	symbol := c.PostForm("symbol")
-	leverage, _ := strconv.Atoi(c.PostForm("leverage"))
+	// Parse form data from body
+	c.Request.ParseForm()
+
+	// Try to get symbol from query first, then from form body
+	symbol := c.Query("symbol")
+	if symbol == "" {
+		symbol = c.PostForm("symbol")
+	}
+
+	// Try to get leverage from query first, then from form body
+	leverageStr := c.Query("leverage")
+	if leverageStr == "" {
+		leverageStr = c.PostForm("leverage")
+	}
+	leverage, _ := strconv.Atoi(leverageStr)
 
 	if symbol == "" {
 		c.JSON(400, gin.H{"code": -1102, "msg": "Mandatory parameter 'symbol' was not sent."})
