@@ -237,8 +237,6 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 		return
 	}
 
-	isOpen := !reduceOnly && !closePosition
-
 	var posSide models.PositionSide
 	if positionSide == "LONG" {
 		posSide = models.PositionSideLong
@@ -264,10 +262,33 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 		oType = models.OrderTypeMarket
 	}
 
+	// Check if this is a conditional order (SL/TP)
+	// STOP_MARKET and TAKE_PROFIT are conditional orders that should NOT execute immediately
+	// They should only create an order with status NEW and wait for price trigger
+	isConditionalOrder := oType == models.OrderTypeStopMarket || oType == models.OrderTypeTakeProfit
+
+	// Determine if this is an open position order
+	// Conditional orders are always reduce-only by nature (they close positions when triggered)
+	isOpen := !reduceOnly && !closePosition && !isConditionalOrder
+
 	var order *models.Order
 	var err error
 
-	if isOpen {
+	if isConditionalOrder {
+		// For conditional orders (SL/TP), just create the order without executing
+		// The order will be triggered when price reaches the stop price
+		order, err = h.tradingService.CreateConditionalOrder(&service.ConditionalOrderRequest{
+			AccountID:     account.ID,
+			Symbol:        symbol,
+			Side:          posSide,
+			Quantity:      quantity,
+			OrderType:     oType,
+			StopPrice:     stopPrice,
+			Price:         price,
+			ReduceOnly:    reduceOnly,
+			ClosePosition: closePosition,
+		}, models.ExchangeBinance)
+	} else if isOpen {
 		req := &service.OpenPositionRequest{
 			AccountID: account.ID,
 			Symbol:    symbol,
@@ -340,19 +361,20 @@ func (h *Handler) CreateAlgoOrder(c *gin.Context) {
 		oType = models.OrderTypeStopMarket
 	}
 
-	req := &service.ClosePositionRequest{
+	// Algo orders are conditional orders (SL/TP) - they should NOT execute immediately
+	// They just create an order entry and wait for price trigger
+	order, err := h.tradingService.CreateConditionalOrder(&service.ConditionalOrderRequest{
 		AccountID:     account.ID,
 		Symbol:        symbol,
 		Side:          posSide,
-		Quantity:      &quantity,
+		Quantity:      quantity,
 		OrderType:     oType,
-		Price:         price,
 		StopPrice:     triggerPrice,
+		Price:         price,
 		ClosePosition: closePosition,
 		ReduceOnly:    reduceOnly,
-	}
+	}, models.ExchangeBinance)
 
-	order, _, err := h.tradingService.ClosePosition(req, models.ExchangeBinance)
 	if err != nil {
 		h.handleError(c, err)
 		return

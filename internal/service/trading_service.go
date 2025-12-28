@@ -88,6 +88,20 @@ type ClosePositionRequest struct {
 	ReduceOnly    bool                `json:"reduce_only"`
 }
 
+// ConditionalOrderRequest represents a request to create a conditional order (SL/TP)
+// These orders do NOT execute immediately, they wait for price trigger
+type ConditionalOrderRequest struct {
+	AccountID     uint                `json:"account_id"`
+	Symbol        string              `json:"symbol" binding:"required"`
+	Side          models.PositionSide `json:"side"`
+	Quantity      float64             `json:"quantity"`
+	OrderType     models.OrderType    `json:"order_type"` // STOP_MARKET or TAKE_PROFIT
+	StopPrice     float64             `json:"stop_price"` // Trigger price
+	Price         float64             `json:"price"`      // Execution price (for limit type)
+	ClosePosition bool                `json:"close_position"`
+	ReduceOnly    bool                `json:"reduce_only"`
+}
+
 // OpenPosition opens a new position or adds to an existing one
 func (s *TradingService) OpenPosition(req *OpenPositionRequest, exchangeType models.ExchangeType) (*models.Order, *models.Position, error) {
 	// Get account
@@ -403,6 +417,57 @@ func (s *TradingService) ClosePosition(req *ClosePositionRequest, exchangeType m
 	}
 
 	return order, closedPnL, nil
+}
+
+// CreateConditionalOrder creates a conditional order (SL/TP) without executing it
+// The order is stored with status NEW and waits for price to trigger
+// This does NOT affect positions, orders are tracked separately and trigger on price condition
+func (s *TradingService) CreateConditionalOrder(req *ConditionalOrderRequest, exchangeType models.ExchangeType) (*models.Order, error) {
+	// Validate order type
+	if req.OrderType != models.OrderTypeStopMarket && req.OrderType != models.OrderTypeTakeProfit {
+		return nil, ErrInvalidOrderType
+	}
+
+	// Validate symbol
+	_, err := s.priceService.GetSymbolInfo(string(exchangeType), req.Symbol)
+	if err != nil {
+		return nil, ErrInvalidSymbol
+	}
+
+	// Validate stop price
+	if req.StopPrice <= 0 {
+		return nil, ErrInvalidQuantity
+	}
+
+	// Determine order side based on position side (SL/TP close opposite side)
+	var orderSide models.OrderSide
+	if req.Side == models.PositionSideLong {
+		orderSide = models.OrderSideSell // Close long = sell
+	} else {
+		orderSide = models.OrderSideBuy // Close short = buy
+	}
+
+	// Create conditional order with status NEW
+	order := &models.Order{
+		AccountID:     req.AccountID,
+		ClientOrderID: uuid.New().String(),
+		Symbol:        req.Symbol,
+		Side:          orderSide,
+		PositionSide:  req.Side,
+		Type:          req.OrderType,
+		Quantity:      req.Quantity,
+		Price:         req.Price,
+		StopPrice:     req.StopPrice,
+		Status:        models.OrderStatusNew,  // IMPORTANT: Not executed, waiting for trigger
+		ReduceOnly:    req.ReduceOnly || true, // SL/TP is always reduce-only
+		ClosePosition: req.ClosePosition,
+	}
+
+	if err := s.orderRepo.Create(order); err != nil {
+		return nil, fmt.Errorf("failed to create conditional order: %w", err)
+	}
+
+	return order, nil
 }
 
 // GetPositions returns all positions for an account
