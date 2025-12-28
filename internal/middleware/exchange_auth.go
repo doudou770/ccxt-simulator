@@ -132,30 +132,56 @@ func verifyBinanceSignature(c *gin.Context, apiSecret string) bool {
 		return false
 	}
 
-	var queryString string
+	// Read body for POST/PUT/DELETE
+	bodyBytes, _ := io.ReadAll(c.Request.Body)
+	c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+	bodyStr := string(bodyBytes)
 
-	// For POST/PUT/DELETE, Binance sends params in query string, not body
-	// The signature is computed over the query string (excluding signature itself)
+	// Get query string (excluding signature)
 	rawQuery := c.Request.URL.RawQuery
 	parts := strings.Split(rawQuery, "&")
-	var filtered []string
+	var queryFiltered []string
 	for _, part := range parts {
 		if part != "" && !strings.HasPrefix(part, "signature=") {
-			filtered = append(filtered, part)
+			queryFiltered = append(queryFiltered, part)
 		}
 	}
-	queryString = strings.Join(filtered, "&")
+	queryWithoutSig := strings.Join(queryFiltered, "&")
+
+	// Parse body as form data (excluding signature)
+	var bodyFiltered []string
+	if bodyStr != "" {
+		bodyParts := strings.Split(bodyStr, "&")
+		for _, part := range bodyParts {
+			if part != "" && !strings.HasPrefix(part, "signature=") {
+				bodyFiltered = append(bodyFiltered, part)
+			}
+		}
+	}
+	bodyWithoutSig := strings.Join(bodyFiltered, "&")
+
+	// Combine query and body for signature
+	// Binance signs: body params + query params (body first, then query)
+	var signString string
+	if bodyWithoutSig != "" && queryWithoutSig != "" {
+		signString = bodyWithoutSig + "&" + queryWithoutSig
+	} else if bodyWithoutSig != "" {
+		signString = bodyWithoutSig
+	} else {
+		signString = queryWithoutSig
+	}
 
 	// Calculate signature
 	mac := hmac.New(sha256.New, []byte(apiSecret))
-	mac.Write([]byte(queryString))
+	mac.Write([]byte(signString))
 	expectedSig := hex.EncodeToString(mac.Sum(nil))
 
 	// Debug logging
 	if providedSig != expectedSig {
 		LogError("[BINANCE] Signature mismatch: method=%s path=%s", c.Request.Method, c.Request.URL.Path)
 		LogError("[BINANCE] Raw query: %s", rawQuery)
-		LogError("[BINANCE] Query string to sign: %s", queryString)
+		LogError("[BINANCE] Body: %s", bodyStr)
+		LogError("[BINANCE] String to sign: %s", signString)
 		LogError("[BINANCE] Expected signature: %s", expectedSig)
 		LogError("[BINANCE] Provided signature: %s", providedSig)
 		if len(apiSecret) >= 8 {
