@@ -22,7 +22,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       packages: write
 
     steps:
@@ -112,18 +112,26 @@ jobs:
 
       - name: Create Git tag
         if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # Only create tag for main branch pushes (not PR or tag pushes)
           if [[ "${{ github.event_name }}" == "push" ]] && [[ "${{ github.ref }}" != refs/tags/* ]]; then
             VERSION="${{ steps.version.outputs.VERSION }}"
             # Remove commit hash suffix for tag name
             TAG_NAME=$(echo $VERSION | sed 's/-[a-f0-9]*$//')
-            echo "Would create tag: ${TAG_NAME}"
-            # Uncomment to actually create tags:
-            # git config user.name github-actions
-            # git config user.email github-actions@github.com
-            # git tag -a "${TAG_NAME}" -m "Release ${TAG_NAME}"
-            # git push origin "${TAG_NAME}"
+            echo "Creating tag: ${TAG_NAME}"
+            
+            # Check if tag already exists
+            if git rev-parse "${TAG_NAME}" >/dev/null 2>&1; then
+              echo "Tag ${TAG_NAME} already exists, skipping..."
+            else
+              git config user.name github-actions
+              git config user.email github-actions@github.com
+              git tag -a "${TAG_NAME}" -m "Release ${TAG_NAME}"
+              git push origin "${TAG_NAME}"
+              echo "Successfully created and pushed tag: ${TAG_NAME}"
+            fi
           fi
 
       - name: Generate release notes
