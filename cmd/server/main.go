@@ -97,6 +97,12 @@ func main() {
 	// Create Gin router
 	router := gin.Default()
 
+	// Add request logging middleware (logs all requests with error details)
+	router.Use(middleware.RequestLoggerMiddleware())
+
+	// Uncomment below for detailed debug logging (verbose output)
+	// router.Use(middleware.DebugLoggerMiddleware())
+
 	// Add CORS middleware
 	router.Use(corsMiddleware())
 
