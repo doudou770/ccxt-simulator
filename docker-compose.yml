@@ -31,6 +31,7 @@ services:
       - ENCRYPTION_AES_KEY=${AES_KEY:-ccxt-simulator-32bytes-aes-key!!}
     volumes:
       - ./config.yaml:/app/config.yaml:ro
+      - ./logs:/app/logs
     depends_on:
       postgres:
         condition: service_healthy

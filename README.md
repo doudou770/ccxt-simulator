@@ -138,7 +138,8 @@ docker pull ghcr.io/doudou770/ccxt-simulator:latest
 docker run -d \
   --name ccxt-simulator \
   -p 11188:11188 \
-  -v $(pwd)/config.yaml:/app/config.yaml:ro \
+  -v /opt/ccxt-simulator/config.yaml:/app/config.yaml:ro \
+  -v /opt/ccxt-simulator/logs:/app/logs \
   -e DATABASE_HOST=your_postgres_host \
   -e REDIS_HOST=your_redis_host \
   ghcr.io/doudou770/ccxt-simulator:latest

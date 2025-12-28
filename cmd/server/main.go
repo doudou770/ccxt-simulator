@@ -42,6 +42,11 @@ func main() {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
+	// Initialize file-based logging system
+	if err := middleware.InitLogger("logs"); err != nil {
+		log.Printf("Warning: Failed to initialize file logger: %v", err)
+	}
+
 	// Set Gin mode
 	gin.SetMode(cfg.Server.Mode)
 
