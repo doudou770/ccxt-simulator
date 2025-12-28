@@ -42,6 +42,11 @@ func main() {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
+	// Initialize file-based logging system
+	if err := middleware.InitLogger("logs"); err != nil {
+		log.Printf("Warning: Failed to initialize file logger: %v", err)
+	}
+
 	// Set Gin mode
 	gin.SetMode(cfg.Server.Mode)
 
@@ -96,6 +101,12 @@ func main() {
 
 	// Create Gin router
 	router := gin.Default()
+
+	// Add request logging middleware (logs all requests with error details)
+	router.Use(middleware.RequestLoggerMiddleware())
+
+	// Uncomment below for detailed debug logging (verbose output)
+	// router.Use(middleware.DebugLoggerMiddleware())
 
 	// Add CORS middleware
 	router.Use(corsMiddleware())

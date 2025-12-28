@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"net/url"
 	"sort"
 	"strconv"
@@ -79,6 +80,8 @@ func BinanceAuthMiddleware(accountService *service.AccountService, aesKey string
 		// Verify signature for POST/PUT/DELETE requests
 		if c.Request.Method != "GET" || c.Query("signature") != "" {
 			if !verifyBinanceSignature(c, apiSecret) {
+				log.Printf("[BINANCE] Signature verification failed: method=%s path=%s query=%s",
+					c.Request.Method, c.Request.URL.Path, c.Request.URL.RawQuery)
 				c.JSON(401, gin.H{
 					"code": -1022,
 					"msg":  "Signature for this request is not valid.",
