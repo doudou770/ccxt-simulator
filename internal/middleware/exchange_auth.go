@@ -119,27 +119,44 @@ func verifyBinanceSignature(c *gin.Context, apiSecret string) bool {
 		providedSig = c.PostForm("signature")
 	}
 	if providedSig == "" {
+		log.Printf("[BINANCE] No signature provided")
 		return false
 	}
 
 	var queryString string
 
 	if c.Request.Method == "POST" || c.Request.Method == "PUT" || c.Request.Method == "DELETE" {
-		// For POST/PUT/DELETE, use form body (excluding signature)
-		c.Request.ParseForm()
-		params := make(url.Values)
-		for key, values := range c.Request.PostForm {
-			if key != "signature" {
-				params[key] = values
+		// For POST/PUT/DELETE, check if body is form or JSON
+		contentType := c.GetHeader("Content-Type")
+
+		if strings.Contains(contentType, "application/x-www-form-urlencoded") {
+			// Form data
+			c.Request.ParseForm()
+			params := make(url.Values)
+			for key, values := range c.Request.PostForm {
+				if key != "signature" {
+					params[key] = values
+				}
 			}
-		}
-		// Also include query parameters
-		for key, values := range c.Request.URL.Query() {
-			if key != "signature" {
-				params[key] = values
+			// Also include query parameters
+			for key, values := range c.Request.URL.Query() {
+				if key != "signature" {
+					params[key] = values
+				}
 			}
+			queryString = params.Encode()
+		} else {
+			// For JSON body or no body, use query string
+			rawQuery := c.Request.URL.RawQuery
+			parts := strings.Split(rawQuery, "&")
+			var filtered []string
+			for _, part := range parts {
+				if part != "" && !strings.HasPrefix(part, "signature=") {
+					filtered = append(filtered, part)
+				}
+			}
+			queryString = strings.Join(filtered, "&")
 		}
-		queryString = params.Encode()
 	} else {
 		// For GET requests, use the raw query string (preserving order)
 		rawQuery := c.Request.URL.RawQuery
@@ -147,7 +164,7 @@ func verifyBinanceSignature(c *gin.Context, apiSecret string) bool {
 		parts := strings.Split(rawQuery, "&")
 		var filtered []string
 		for _, part := range parts {
-			if !strings.HasPrefix(part, "signature=") {
+			if part != "" && !strings.HasPrefix(part, "signature=") {
 				filtered = append(filtered, part)
 			}
 		}
@@ -159,7 +176,16 @@ func verifyBinanceSignature(c *gin.Context, apiSecret string) bool {
 	mac.Write([]byte(queryString))
 	expectedSig := hex.EncodeToString(mac.Sum(nil))
 
-	return hmac.Equal([]byte(providedSig), []byte(expectedSig))
+	// Debug logging
+	if providedSig != expectedSig {
+		log.Printf("[BINANCE] Signature mismatch: method=%s path=%s", c.Request.Method, c.Request.URL.Path)
+		log.Printf("[BINANCE] Query string to sign: %s", queryString)
+		log.Printf("[BINANCE] Expected signature: %s", expectedSig)
+		log.Printf("[BINANCE] Provided signature: %s", providedSig)
+		return false
+	}
+
+	return true
 }
 
 // OKXAuthMiddleware creates authentication middleware for OKX API
