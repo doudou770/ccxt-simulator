@@ -22,9 +22,15 @@ var (
 // InitLogger initializes the file-based logging system
 // Logs are saved in the logs folder, rotated daily and when size exceeds 10MB
 func InitLogger(logDir string) error {
+	// Get absolute path for log directory
+	absLogDir, err := filepath.Abs(logDir)
+	if err != nil {
+		absLogDir = logDir
+	}
+
 	// Create logs directory if not exists
-	if err := os.MkdirAll(logDir, 0755); err != nil {
-		return fmt.Errorf("failed to create log directory: %w", err)
+	if err := os.MkdirAll(absLogDir, 0755); err != nil {
+		return fmt.Errorf("failed to create log directory %s: %w", absLogDir, err)
 	}
 
 	// Get current date for log file name
@@ -32,7 +38,7 @@ func InitLogger(logDir string) error {
 
 	// Setup info logger with rotation
 	infoLogFile := &lumberjack.Logger{
-		Filename:   filepath.Join(logDir, fmt.Sprintf("app-%s.log", currentDate)),
+		Filename:   filepath.Join(absLogDir, fmt.Sprintf("app-%s.log", currentDate)),
 		MaxSize:    10, // 10 MB
 		MaxBackups: 30, // Keep 30 old files
 		MaxAge:     30, // 30 days
@@ -42,7 +48,7 @@ func InitLogger(logDir string) error {
 
 	// Setup error logger with rotation
 	errorLogFile := &lumberjack.Logger{
-		Filename:   filepath.Join(logDir, fmt.Sprintf("error-%s.log", currentDate)),
+		Filename:   filepath.Join(absLogDir, fmt.Sprintf("error-%s.log", currentDate)),
 		MaxSize:    10, // 10 MB
 		MaxBackups: 30,
 		MaxAge:     30,
@@ -52,7 +58,7 @@ func InitLogger(logDir string) error {
 
 	// Setup debug logger with rotation
 	debugLogFile := &lumberjack.Logger{
-		Filename:   filepath.Join(logDir, fmt.Sprintf("debug-%s.log", currentDate)),
+		Filename:   filepath.Join(absLogDir, fmt.Sprintf("debug-%s.log", currentDate)),
 		MaxSize:    10, // 10 MB
 		MaxBackups: 7,  // Keep 7 old files for debug
 		MaxAge:     7,  // 7 days
@@ -69,7 +75,10 @@ func InitLogger(logDir string) error {
 	log.SetOutput(io.MultiWriter(os.Stdout, infoLogFile))
 	log.SetFlags(log.LstdFlags)
 
-	infoLogger.Printf("[INFO] Logger initialized, log directory: %s", logDir)
+	// Force write to create log files immediately
+	infoLogger.Printf("[INFO] Logger initialized, log directory: %s", absLogDir)
+	infoLogger.Printf("[INFO] Log files: app-%s.log, error-%s.log, debug-%s.log", currentDate, currentDate, currentDate)
+
 	return nil
 }
 
