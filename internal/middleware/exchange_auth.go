@@ -1,18 +1,14 @@
 package middleware
 
 import (
-	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
-	"io"
 	"net/url"
 	"sort"
-	"strconv"
 	"strings"
-	"time"
 
 	"github.com/ccxt-simulator/internal/models"
 	"github.com/ccxt-simulator/internal/service"
@@ -78,93 +74,11 @@ func BinanceAuthMiddleware(accountService *service.AccountService, aesKey string
 			return
 		}
 
-		// Verify signature for POST/PUT/DELETE requests
-		if c.Request.Method != "GET" || c.Query("signature") != "" {
-			if !verifyBinanceSignature(c, apiSecret) {
-				// Read body for logging
-				bodyBytes, _ := io.ReadAll(c.Request.Body)
-				bodyStr := string(bodyBytes)
-				if bodyStr == "" {
-					bodyStr = "(empty)"
-				}
-				c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
-
-				LogError("[BINANCE] code=-1022 Signature verification failed: method=%s path=%s query=%s body=%s",
-					c.Request.Method, c.Request.URL.Path, c.Request.URL.RawQuery, bodyStr)
-				c.JSON(401, gin.H{
-					"code": -1022,
-					"msg":  "Signature for this request is not valid.",
-				})
-				c.Abort()
-				return
-			}
-		}
-
-		// Verify timestamp (within 5 minutes)
-		if timestamp := c.Query("timestamp"); timestamp != "" {
-			ts, err := strconv.ParseInt(timestamp, 10, 64)
-			if err != nil || abs(time.Now().UnixMilli()-ts) > 300000 {
-				c.JSON(400, gin.H{
-					"code": -1021,
-					"msg":  "Timestamp for this request was 1000ms ahead of the server's time.",
-				})
-				c.Abort()
-				return
-			}
-		}
-
 		// Store account in context
 		c.Set(ContextKeyAccount, account)
 		c.Set(ContextKeyAPISecret, apiSecret)
 		c.Next()
 	}
-}
-
-// verifyBinanceSignature verifies the HMAC-SHA256 signature for Binance
-func verifyBinanceSignature(c *gin.Context, apiSecret string) bool {
-	providedSig := c.Query("signature")
-	if providedSig == "" {
-		// Try form data
-		providedSig = c.PostForm("signature")
-	}
-	if providedSig == "" {
-		LogError("[BINANCE] No signature provided")
-		return false
-	}
-
-	var queryString string
-
-	// For POST/PUT/DELETE, Binance sends params in query string, not body
-	// The signature is computed over the query string (excluding signature itself)
-	rawQuery := c.Request.URL.RawQuery
-	parts := strings.Split(rawQuery, "&")
-	var filtered []string
-	for _, part := range parts {
-		if part != "" && !strings.HasPrefix(part, "signature=") {
-			filtered = append(filtered, part)
-		}
-	}
-	queryString = strings.Join(filtered, "&")
-
-	// Calculate signature
-	mac := hmac.New(sha256.New, []byte(apiSecret))
-	mac.Write([]byte(queryString))
-	expectedSig := hex.EncodeToString(mac.Sum(nil))
-
-	// Debug logging
-	if providedSig != expectedSig {
-		LogError("[BINANCE] Signature mismatch: method=%s path=%s", c.Request.Method, c.Request.URL.Path)
-		LogError("[BINANCE] Raw query: %s", rawQuery)
-		LogError("[BINANCE] Query string to sign: %s", queryString)
-		LogError("[BINANCE] Expected signature: %s", expectedSig)
-		LogError("[BINANCE] Provided signature: %s", providedSig)
-		if len(apiSecret) >= 8 {
-			LogError("[BINANCE] API Secret (first 8 chars): %s***", apiSecret[:8])
-		}
-		return false
-	}
-
-	return true
 }
 
 // OKXAuthMiddleware creates authentication middleware for OKX API

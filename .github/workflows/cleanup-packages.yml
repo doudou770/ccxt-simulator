@@ -1,0 +1,73 @@
+name: Cleanup Old Packages
+
+on:
+  schedule:
+    # 每天凌晨 2:00 UTC (北京时间 10:00) 运行
+    # 如需调整为北京时间凌晨，可改为 'cron: 0 18 * * *' (UTC 18:00 = 北京 02:00)
+    - cron: '0 18 * * *'
+  workflow_dispatch:
+    inputs:
+      keep_versions:
+        description: '保留的版本数量'
+        required: false
+        default: '3'
+        type: string
+      dry_run:
+        description: '仅预览不删除 (true/false)'
+        required: false
+        default: 'false'
+        type: string
+
+env:
+  PACKAGE_NAME: ccxt-simulator
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set cleanup parameters
+        id: params
+        run: |
+          # 默认保留最近 5 个版本
+          KEEP_VERSIONS="${{ github.event.inputs.keep_versions || '5' }}"
+          DRY_RUN="${{ github.event.inputs.dry_run || 'false' }}"
+          
+          echo "KEEP_VERSIONS=${KEEP_VERSIONS}" >> $GITHUB_OUTPUT
+          echo "DRY_RUN=${DRY_RUN}" >> $GITHUB_OUTPUT
+          echo "保留版本数: ${KEEP_VERSIONS}"
+          echo "预览模式: ${DRY_RUN}"
+
+      - name: Delete old package versions
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: ${{ env.PACKAGE_NAME }}
+          package-type: 'container'
+          min-versions-to-keep: ${{ steps.params.outputs.KEEP_VERSIONS }}
+          delete-only-untagged-versions: 'false'
+          # 忽略以下标签的版本（不会被删除）
+          ignore-versions: '^(latest|v\d+\.\d+\.\d+)$'
+
+      - name: Cleanup untagged versions
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: ${{ env.PACKAGE_NAME }}
+          package-type: 'container'
+          delete-only-untagged-versions: 'true'
+          min-versions-to-keep: 0
+
+      - name: Generate cleanup summary
+        run: |
+          echo "## 🧹 Package Cleanup Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Package**: ${{ env.PACKAGE_NAME }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **保留版本数**: ${{ steps.params.outputs.KEEP_VERSIONS }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **运行时间**: $(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "清理完成！旧版本和未标记的镜像已被删除。" >> $GITHUB_STEP_SUMMARY
