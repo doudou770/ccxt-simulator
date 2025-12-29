@@ -271,8 +271,9 @@ func (s *TradingService) executeOpenOrder(
 		}
 	}
 
-	// Deduct margin and fee from balance
-	account.BalanceUSDT -= (margin + fee)
+	// Only deduct fee from balance (Binance-style: margin is tracked in position, not deducted from walletBalance)
+	// walletBalance = initial balance - fees +/- realized PnL
+	account.BalanceUSDT -= fee
 	if err := s.accountRepo.Update(account); err != nil {
 		return nil, nil, err
 	}
@@ -373,8 +374,8 @@ func (s *TradingService) ClosePosition(req *ClosePositionRequest, exchangeType m
 		return nil, nil, err
 	}
 
-	// Calculate margin to return
-	marginToReturn := position.Margin * (closeQty / position.Quantity)
+	// Calculate margin ratio for partial close (used for position update, not balance)
+	marginRatio := closeQty / position.Quantity
 
 	// Update or delete position
 	var closedPnL *models.ClosedPnLRecord
@@ -404,14 +405,15 @@ func (s *TradingService) ClosePosition(req *ClosePositionRequest, exchangeType m
 	} else {
 		// Partial close
 		position.Quantity -= closeQty
-		position.Margin -= marginToReturn
+		position.Margin -= position.Margin * marginRatio
 		if err := s.positionRepo.Update(position); err != nil {
 			return nil, nil, err
 		}
 	}
 
-	// Update account balance
-	account.BalanceUSDT += marginToReturn + realizedPnL - fee
+	// Update account balance (Binance-style: only add realized PnL minus fee, margin was never deducted)
+	// walletBalance = initial balance - fees +/- realized PnL
+	account.BalanceUSDT += realizedPnL - fee
 	if err := s.accountRepo.Update(account); err != nil {
 		return nil, nil, err
 	}
@@ -508,12 +510,19 @@ func (s *TradingService) GetBalance(accountID uint, exchangeType models.Exchange
 		totalMargin += pos.Margin
 	}
 
+	// Binance-style balance calculation:
+	// walletBalance = initial balance - fees +/- realized PnL (stored in account.BalanceUSDT)
+	// marginBalance (equity) = walletBalance + unrealizedPnL
+	// availableBalance = marginBalance - totalMargin (can be used for new positions)
+	equity := account.BalanceUSDT + totalUnrealizedPnL
+	available := equity - totalMargin
+
 	return map[string]float64{
-		"balance":         account.BalanceUSDT,
-		"available":       account.BalanceUSDT - totalMargin,
-		"margin":          totalMargin,
-		"unrealized_pnl":  totalUnrealizedPnL,
-		"equity":          account.BalanceUSDT + totalUnrealizedPnL,
+		"balance":         account.BalanceUSDT, // walletBalance
+		"available":       available,           // availableBalance
+		"margin":          totalMargin,         // totalInitialMargin
+		"unrealized_pnl":  totalUnrealizedPnL,  // totalUnrealizedProfit
+		"equity":          equity,              // marginBalance
 		"initial_balance": account.InitialBalance,
 	}, nil
 }
