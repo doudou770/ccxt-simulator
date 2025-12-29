@@ -204,3 +204,14 @@ func (r *OrderRepository) CancelOpenOrdersByTypes(accountID uint, symbol string,
 	})
 	return result.RowsAffected, result.Error
 }
+
+// GetAllPendingStopOrders retrieves all pending stop orders across all accounts
+func (r *OrderRepository) GetAllPendingStopOrders() ([]models.Order, error) {
+	var orders []models.Order
+	result := r.db.Where("status = ? AND type IN ?", models.OrderStatusNew, []models.OrderType{
+		models.OrderTypeStopLoss,
+		models.OrderTypeTakeProfit,
+		models.OrderTypeStopMarket,
+	}).Find(&orders)
+	return orders, result.Error
+}

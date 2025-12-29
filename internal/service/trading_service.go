@@ -666,3 +666,132 @@ func (s *TradingService) CancelAllAlgoOrders(accountID uint, symbol string) (int
 	}
 	return s.orderRepo.CancelOpenOrdersByTypes(accountID, symbol, orderTypes)
 }
+
+// ExecuteTriggeredOrder executes a triggered SL/TP order
+// This is called by the SL/TP monitoring worker when price triggers the order
+func (s *TradingService) ExecuteTriggeredOrder(order *models.Order, exchangeType models.ExchangeType) (*models.ClosedPnLRecord, error) {
+	// Get account
+	account, err := s.accountRepo.GetByID(order.AccountID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get account: %w", err)
+	}
+
+	// Find position to close
+	position, err := s.positionRepo.GetByAccountIDSymbolAndSide(order.AccountID, order.Symbol, order.PositionSide)
+	if err != nil {
+		// No position to close, cancel the order
+		order.Status = models.OrderStatusCanceled
+		s.orderRepo.Update(order)
+		return nil, ErrNoOpenPosition
+	}
+
+	// Determine close quantity
+	closeQty := order.Quantity
+	if order.ClosePosition || closeQty == 0 {
+		closeQty = position.Quantity
+	}
+	if closeQty > position.Quantity {
+		closeQty = position.Quantity
+	}
+
+	// Get execution price (use stop price as trigger price, then apply slippage)
+	executionPrice := order.StopPrice
+	if position.Side == models.PositionSideLong {
+		executionPrice = executionPrice * (1 - defaultSlippage)
+	} else {
+		executionPrice = executionPrice * (1 + defaultSlippage)
+	}
+
+	// Calculate PnL
+	var realizedPnL float64
+	if position.Side == models.PositionSideLong {
+		realizedPnL = (executionPrice - position.EntryPrice) * closeQty
+	} else {
+		realizedPnL = (position.EntryPrice - executionPrice) * closeQty
+	}
+
+	// Calculate fee
+	positionValue := executionPrice * closeQty
+	fee := positionValue * account.TakerFeeRate
+
+	// Update order status
+	order.Status = models.OrderStatusFilled
+	order.FilledQty = closeQty
+	order.AvgPrice = executionPrice
+	if err := s.orderRepo.Update(order); err != nil {
+		return nil, fmt.Errorf("failed to update order: %w", err)
+	}
+
+	// Create trade record
+	trade := &models.Trade{
+		AccountID:   order.AccountID,
+		OrderID:     order.ID,
+		Symbol:      order.Symbol,
+		Side:        order.Side,
+		Quantity:    closeQty,
+		Price:       executionPrice,
+		Fee:         fee,
+		FeeCurrency: "USDT",
+		RealizedPnL: realizedPnL,
+		IsMaker:     false,
+		ExecutedAt:  time.Now(),
+	}
+	if err := s.tradeRepo.Create(trade); err != nil {
+		return nil, fmt.Errorf("failed to create trade: %w", err)
+	}
+
+	// Calculate margin ratio for partial close
+	marginRatio := closeQty / position.Quantity
+
+	// Update or delete position
+	var closedPnL *models.ClosedPnLRecord
+	if closeQty >= position.Quantity {
+		// Full close - determine close reason
+		closeReason := "stop_loss"
+		if order.Type == models.OrderTypeTakeProfit {
+			closeReason = "take_profit"
+		}
+
+		closedPnL = &models.ClosedPnLRecord{
+			AccountID:    order.AccountID,
+			Symbol:       order.Symbol,
+			Side:         position.Side,
+			Quantity:     position.Quantity,
+			EntryPrice:   position.EntryPrice,
+			ExitPrice:    executionPrice,
+			RealizedPnL:  realizedPnL,
+			TotalFee:     fee,
+			Leverage:     position.Leverage,
+			ClosedReason: closeReason,
+			OpenedAt:     position.CreatedAt,
+			ClosedAt:     time.Now(),
+		}
+		if err := s.closedPnLRepo.Create(closedPnL); err != nil {
+			return nil, fmt.Errorf("failed to create closed pnl record: %w", err)
+		}
+
+		if err := s.positionRepo.Delete(position.ID); err != nil {
+			return nil, fmt.Errorf("failed to delete position: %w", err)
+		}
+	} else {
+		// Partial close
+		position.Quantity -= closeQty
+		position.Margin -= position.Margin * marginRatio
+		if err := s.positionRepo.Update(position); err != nil {
+			return nil, fmt.Errorf("failed to update position: %w", err)
+		}
+	}
+
+	// Update account balance (Binance-style: only add realized PnL minus fee)
+	account.BalanceUSDT += realizedPnL - fee
+	if err := s.accountRepo.Update(account); err != nil {
+		return nil, fmt.Errorf("failed to update account: %w", err)
+	}
+
+	return closedPnL, nil
+}
+
+// GetPriceService returns the price service (for worker access)
+func (s *TradingService) GetPriceService() *PriceService {
+	return s.priceService
+}
