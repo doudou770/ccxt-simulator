@@ -21,6 +21,7 @@ import (
 	"github.com/ccxt-simulator/internal/models"
 	"github.com/ccxt-simulator/internal/repository"
 	"github.com/ccxt-simulator/internal/service"
+	"github.com/ccxt-simulator/internal/worker"
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 	"gorm.io/driver/postgres"
@@ -185,6 +186,10 @@ func main() {
 		log.Printf("Warning: Failed to start price service: %v", err)
 	}
 
+	// Start SL/TP monitoring worker
+	sltpWorker := worker.NewSLTPWorker(tradingService, orderRepo, 1*time.Second)
+	go sltpWorker.Start()
+
 	// Start server in goroutine
 	go func() {
 		log.Printf("Starting server on %s", addr)
@@ -199,6 +204,9 @@ func main() {
 	<-quit
 
 	log.Println("Shutting down server...")
+
+	// Stop SL/TP worker
+	sltpWorker.Stop()
 
 	// Stop price service
 	priceService.Stop()
