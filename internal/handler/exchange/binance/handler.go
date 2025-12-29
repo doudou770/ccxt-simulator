@@ -267,9 +267,23 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 	// They should only create an order with status NEW and wait for price trigger
 	isConditionalOrder := oType == models.OrderTypeStopMarket || oType == models.OrderTypeTakeProfit
 
-	// Determine if this is an open position order
-	// Conditional orders are always reduce-only by nature (they close positions when triggered)
-	isOpen := !reduceOnly && !closePosition && !isConditionalOrder
+	// Determine if this is a close position order
+	// In hedge mode: LONG+SELL or SHORT+BUY = close position
+	// In one-way mode (positionSide=BOTH or empty): use reduceOnly/closePosition flags
+	isClosing := false
+	if positionSide == "LONG" && side == "SELL" {
+		// Hedge mode: selling on LONG position side = closing long
+		isClosing = true
+	} else if positionSide == "SHORT" && side == "BUY" {
+		// Hedge mode: buying on SHORT position side = closing short
+		isClosing = true
+	} else if reduceOnly || closePosition {
+		// One-way mode or explicit reduce-only flag
+		isClosing = true
+	}
+
+	// Open position if not closing and not a conditional order
+	isOpen := !isClosing && !isConditionalOrder
 
 	var order *models.Order
 	var err error
