@@ -209,3 +209,55 @@ func DebugLoggerMiddleware() gin.HandlerFunc {
 		LogDebug("<-- %s %s | status=%d", method, path, c.Writer.Status())
 	}
 }
+
+// OrderDebugMiddleware logs complete RAW request details for order-related endpoints
+// This middleware should be applied to order creation endpoints for debugging
+// Logs raw data to make it easy to copy and replay requests
+func OrderDebugMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		startTime := time.Now()
+
+		// Read and restore request body
+		var bodyBytes []byte
+		if c.Request.Body != nil {
+			bodyBytes, _ = io.ReadAll(c.Request.Body)
+			c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+		}
+
+		// Build raw headers string
+		var headersRaw bytes.Buffer
+		headersRaw.WriteString("{")
+		first := true
+		for key, values := range c.Request.Header {
+			if !first {
+				headersRaw.WriteString(", ")
+			}
+			first = false
+			headersRaw.WriteString(fmt.Sprintf("\"%s\": \"%s\"", key, values[0]))
+		}
+		headersRaw.WriteString("}")
+
+		// Log everything in raw format for easy copy/paste and replay
+		LogDebug("========== ORDER REQUEST RAW ==========")
+		LogDebug("TIME: %s", startTime.Format("2006-01-02 15:04:05.000"))
+		LogDebug("METHOD: %s", c.Request.Method)
+		LogDebug("HOST: %s", c.Request.Host)
+		LogDebug("PATH: %s", c.Request.URL.Path)
+		LogDebug("RAW_QUERY: %s", c.Request.URL.RawQuery)
+		LogDebug("RAW_HEADERS: %s", headersRaw.String())
+		LogDebug("RAW_BODY: %s", string(bodyBytes))
+		LogDebug("FULL_URL: %s://%s%s", c.Request.URL.Scheme, c.Request.Host, c.Request.URL.RequestURI())
+		LogDebug("CLIENT_IP: %s", c.ClientIP())
+		LogDebug("========================================")
+
+		// Process request
+		c.Next()
+
+		// Log response
+		latency := time.Since(startTime)
+		LogDebug("========== ORDER RESPONSE ==========")
+		LogDebug("STATUS: %d", c.Writer.Status())
+		LogDebug("LATENCY: %v", latency)
+		LogDebug("=====================================")
+	}
+}

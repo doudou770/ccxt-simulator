@@ -1,6 +1,7 @@
 package binance
 
 import (
+	"log"
 	"strconv"
 	"time"
 
@@ -232,6 +233,10 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 	reduceOnly := c.PostForm("reduceOnly") == "true"
 	closePosition := c.PostForm("closePosition") == "true"
 
+	// DEBUG: Log the raw order parameters
+	log.Printf("[DEBUG] CreateOrder: symbol=%s, side=%s, positionSide=%s, type=%q, stopPrice=%f, reduceOnly=%v, closePosition=%v",
+		symbol, side, positionSide, orderType, stopPrice, reduceOnly, closePosition)
+
 	if symbol == "" {
 		c.JSON(400, gin.H{"code": -1102, "msg": "Mandatory parameter 'symbol' was not sent."})
 		return
@@ -350,6 +355,10 @@ func (h *Handler) CreateAlgoOrder(c *gin.Context) {
 	price, _ := strconv.ParseFloat(c.PostForm("price"), 64)
 	closePosition := c.PostForm("closePosition") == "true"
 	reduceOnly := c.PostForm("reduceOnly") == "true"
+
+	// DEBUG: Log the raw algo order parameters
+	log.Printf("[DEBUG] CreateAlgoOrder: symbol=%s, positionSide=%s, orderType=%q, triggerPrice=%f, closePosition=%v, reduceOnly=%v",
+		symbol, positionSide, orderType, triggerPrice, closePosition, reduceOnly)
 
 	if symbol == "" {
 		c.JSON(400, gin.H{"code": -1102, "msg": "Mandatory parameter 'symbol' was not sent."})
@@ -741,15 +750,16 @@ func (h *Handler) RegisterRoutes(router *gin.Engine, authMiddleware gin.HandlerF
 		// V1 endpoints
 		v1 := fapi.Group("/v1")
 		{
-			v1.POST("/order", h.CreateOrder)
+			// Order endpoints with debug logging
+			v1.POST("/order", middleware.OrderDebugMiddleware(), h.CreateOrder)
 			v1.DELETE("/order", h.CancelOrder)
 			v1.GET("/order", h.GetQueryOrder)
 			v1.GET("/openOrders", h.GetOpenOrders)
 			v1.DELETE("/allOpenOrders", h.CancelAllOpenOrders)
 			v1.POST("/leverage", h.SetLeverage)
 			v1.POST("/marginType", h.SetMarginType)
-			// Algo orders (SL/TP)
-			v1.POST("/algoOrder", h.CreateAlgoOrder)
+			// Algo orders (SL/TP) with debug logging
+			v1.POST("/algoOrder", middleware.OrderDebugMiddleware(), h.CreateAlgoOrder)
 			v1.DELETE("/algoOrder", h.CancelAlgoOrder)
 			v1.GET("/openAlgoOrders", h.GetOpenAlgoOrders)
 			v1.DELETE("/allOpenAlgoOrders", h.CancelAllOpenAlgoOrders)
