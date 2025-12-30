@@ -349,9 +349,17 @@ func (h *Handler) CreateAlgoOrder(c *gin.Context) {
 	symbol := c.PostForm("symbol")
 	_ = c.PostForm("side") // side is inferred from positionSide
 	positionSide := c.PostForm("positionSide")
-	orderType := c.PostForm("orderType") // algoOrder uses orderType instead of type
+	// Binance sends 'type' parameter, not 'orderType'
+	orderType := c.PostForm("type")
+	if orderType == "" {
+		orderType = c.PostForm("orderType") // fallback for compatibility
+	}
 	quantity, _ := strconv.ParseFloat(c.PostForm("quantity"), 64)
-	triggerPrice, _ := strconv.ParseFloat(c.PostForm("triggerPrice"), 64) // new param name
+	// Binance sends 'triggerPrice', but also check 'stopPrice' for compatibility
+	triggerPrice, _ := strconv.ParseFloat(c.PostForm("triggerPrice"), 64)
+	if triggerPrice == 0 {
+		triggerPrice, _ = strconv.ParseFloat(c.PostForm("stopPrice"), 64)
+	}
 	price, _ := strconv.ParseFloat(c.PostForm("price"), 64)
 	closePosition := c.PostForm("closePosition") == "true"
 	reduceOnly := c.PostForm("reduceOnly") == "true"
