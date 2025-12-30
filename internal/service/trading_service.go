@@ -402,6 +402,9 @@ func (s *TradingService) ClosePosition(req *ClosePositionRequest, exchangeType m
 		if err := s.positionRepo.Delete(position.ID); err != nil {
 			return nil, nil, err
 		}
+
+		// Cancel all remaining SL/TP orders for this symbol to prevent affecting next trade
+		s.CancelAllAlgoOrders(req.AccountID, req.Symbol)
 	} else {
 		// Partial close
 		position.Quantity -= closeQty
@@ -773,6 +776,9 @@ func (s *TradingService) ExecuteTriggeredOrder(order *models.Order, exchangeType
 		if err := s.positionRepo.Delete(position.ID); err != nil {
 			return nil, fmt.Errorf("failed to delete position: %w", err)
 		}
+
+		// Cancel all remaining SL/TP orders for this symbol to prevent affecting next trade
+		s.CancelAllAlgoOrders(order.AccountID, order.Symbol)
 	} else {
 		// Partial close
 		position.Quantity -= closeQty
