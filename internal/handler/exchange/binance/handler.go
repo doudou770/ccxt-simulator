@@ -52,9 +52,14 @@ func (h *Handler) GetAccount(c *gin.Context) {
 
 	positionList := make([]gin.H, 0)
 	for _, pos := range positions {
+		// Binance API spec: positionAmt is negative for SHORT positions
+		positionAmt := pos.Quantity
+		if pos.Side == models.PositionSideShort {
+			positionAmt = -pos.Quantity
+		}
 		positionList = append(positionList, gin.H{
 			"symbol":           pos.Symbol,
-			"positionAmt":      strconv.FormatFloat(pos.Quantity, 'f', 8, 64),
+			"positionAmt":      strconv.FormatFloat(positionAmt, 'f', 8, 64),
 			"entryPrice":       strconv.FormatFloat(pos.EntryPrice, 'f', 8, 64),
 			"markPrice":        strconv.FormatFloat(pos.MarkPrice, 'f', 8, 64),
 			"unRealizedProfit": strconv.FormatFloat(pos.UnrealizedPnL, 'f', 8, 64),
@@ -154,9 +159,14 @@ func (h *Handler) GetPositionRisk(c *gin.Context) {
 		if symbol != "" && pos.Symbol != symbol {
 			continue
 		}
+		// Binance API spec: positionAmt is negative for SHORT positions
+		positionAmt := pos.Quantity
+		if pos.Side == models.PositionSideShort {
+			positionAmt = -pos.Quantity
+		}
 		result = append(result, gin.H{
 			"symbol":           pos.Symbol,
-			"positionAmt":      strconv.FormatFloat(pos.Quantity, 'f', 8, 64),
+			"positionAmt":      strconv.FormatFloat(positionAmt, 'f', 8, 64),
 			"entryPrice":       strconv.FormatFloat(pos.EntryPrice, 'f', 8, 64),
 			"markPrice":        strconv.FormatFloat(pos.MarkPrice, 'f', 8, 64),
 			"unRealizedProfit": strconv.FormatFloat(pos.UnrealizedPnL, 'f', 8, 64),
