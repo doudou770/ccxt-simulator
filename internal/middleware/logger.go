@@ -14,13 +14,11 @@ import (
 )
 
 var (
-	infoLogger  *log.Logger
-	errorLogger *log.Logger
-	debugLogger *log.Logger
+	appLogger *log.Logger
 )
 
 // InitLogger initializes the file-based logging system
-// Logs are saved in the logs folder, rotated daily and when size exceeds 10MB
+// Logs are saved in the logs folder as a single app.log file
 func InitLogger(logDir string) error {
 	// Get absolute path for log directory
 	absLogDir, err := filepath.Abs(logDir)
@@ -36,8 +34,8 @@ func InitLogger(logDir string) error {
 	// Get current date for log file name
 	currentDate := time.Now().Format("2006-01-02")
 
-	// Setup info logger with rotation
-	infoLogFile := &lumberjack.Logger{
+	// Setup single app logger with rotation
+	appLogFile := &lumberjack.Logger{
 		Filename:   filepath.Join(absLogDir, fmt.Sprintf("app-%s.log", currentDate)),
 		MaxSize:    10, // 10 MB
 		MaxBackups: 30, // Keep 30 old files
@@ -46,49 +44,24 @@ func InitLogger(logDir string) error {
 		LocalTime:  true,
 	}
 
-	// Setup error logger with rotation
-	errorLogFile := &lumberjack.Logger{
-		Filename:   filepath.Join(absLogDir, fmt.Sprintf("error-%s.log", currentDate)),
-		MaxSize:    10, // 10 MB
-		MaxBackups: 30,
-		MaxAge:     30,
-		Compress:   true,
-		LocalTime:  true,
-	}
-
-	// Setup debug logger with rotation
-	debugLogFile := &lumberjack.Logger{
-		Filename:   filepath.Join(absLogDir, fmt.Sprintf("debug-%s.log", currentDate)),
-		MaxSize:    10, // 10 MB
-		MaxBackups: 7,  // Keep 7 old files for debug
-		MaxAge:     7,  // 7 days
-		Compress:   true,
-		LocalTime:  true,
-	}
-
-	// Create loggers that write to both file and stdout
-	infoLogger = log.New(io.MultiWriter(os.Stdout, infoLogFile), "", log.LstdFlags)
-	errorLogger = log.New(io.MultiWriter(os.Stderr, errorLogFile, infoLogFile), "", log.LstdFlags)
-	debugLogger = log.New(io.MultiWriter(os.Stdout, debugLogFile), "", log.LstdFlags)
+	// Create logger that writes to both file and stdout
+	appLogger = log.New(io.MultiWriter(os.Stdout, appLogFile), "", log.LstdFlags)
 
 	// Also set the default logger to use file output
-	log.SetOutput(io.MultiWriter(os.Stdout, infoLogFile))
+	log.SetOutput(io.MultiWriter(os.Stdout, appLogFile))
 	log.SetFlags(log.LstdFlags)
 
-	// Force write to create log files immediately
-	infoLogger.Printf("[INFO] Logger initialized, log directory: %s", absLogDir)
-	infoLogger.Printf("[INFO] Log files: app-%s.log, error-%s.log, debug-%s.log", currentDate, currentDate, currentDate)
-
-	// Write a test line to error log to create it
-	errorLogger.Printf("[INFO] Error logger initialized")
+	// Log initialization
+	appLogger.Printf("[INFO] Logger initialized, log directory: %s", absLogDir)
+	appLogger.Printf("[INFO] Log file: app-%s.log", currentDate)
 
 	return nil
 }
 
 // LogInfo logs info level messages
 func LogInfo(format string, v ...interface{}) {
-	if infoLogger != nil {
-		infoLogger.Printf("[INFO] "+format, v...)
+	if appLogger != nil {
+		appLogger.Printf("[INFO] "+format, v...)
 	} else {
 		log.Printf("[INFO] "+format, v...)
 	}
@@ -96,8 +69,8 @@ func LogInfo(format string, v ...interface{}) {
 
 // LogError logs error level messages
 func LogError(format string, v ...interface{}) {
-	if errorLogger != nil {
-		errorLogger.Printf("[ERROR] "+format, v...)
+	if appLogger != nil {
+		appLogger.Printf("[ERROR] "+format, v...)
 	} else {
 		log.Printf("[ERROR] "+format, v...)
 	}
@@ -105,31 +78,25 @@ func LogError(format string, v ...interface{}) {
 
 // LogDebug logs debug level messages
 func LogDebug(format string, v ...interface{}) {
-	if debugLogger != nil {
-		debugLogger.Printf("[DEBUG] "+format, v...)
+	if appLogger != nil {
+		appLogger.Printf("[DEBUG] "+format, v...)
 	} else {
 		log.Printf("[DEBUG] "+format, v...)
 	}
 }
 
-// RequestLoggerMiddleware logs all incoming requests with details
+// RequestLoggerMiddleware logs all incoming requests
+// For GET requests: logs only the full URL with query parameters
+// For other requests: logs basic info (full logging handled by TradingLoggerMiddleware)
 func RequestLoggerMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Start timer
 		startTime := time.Now()
 
-		// Read and restore request body
-		var bodyBytes []byte
-		if c.Request.Body != nil {
-			bodyBytes, _ = io.ReadAll(c.Request.Body)
-			c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+		// Build full URL
+		fullURL := c.Request.URL.Path
+		if c.Request.URL.RawQuery != "" {
+			fullURL = fullURL + "?" + c.Request.URL.RawQuery
 		}
-
-		// Get request details
-		method := c.Request.Method
-		path := c.Request.URL.Path
-		rawQuery := c.Request.URL.RawQuery
-		clientIP := c.ClientIP()
 
 		// Process request
 		c.Next()
@@ -138,82 +105,21 @@ func RequestLoggerMiddleware() gin.HandlerFunc {
 		latency := time.Since(startTime)
 		statusCode := c.Writer.Status()
 
-		// Determine log level based on status code
+		// Log format: METHOD URL | status | latency
 		if statusCode >= 400 {
-			// Error response - log with more details
-			bodyPreview := string(bodyBytes)
-			if len(bodyPreview) > 500 {
-				bodyPreview = bodyPreview[:500] + "..."
-			}
-			if bodyPreview == "" {
-				bodyPreview = "(empty)"
-			}
-			queryPreview := rawQuery
-			if len(queryPreview) > 500 {
-				queryPreview = queryPreview[:500] + "..."
-			}
-			if queryPreview == "" {
-				queryPreview = "(empty)"
-			}
-			LogError("%s %s | query=%s | status=%d | latency=%v | ip=%s | body=%s",
-				method, path, queryPreview, statusCode, latency, clientIP, bodyPreview)
+			LogError("%s %s | status=%d | latency=%v",
+				c.Request.Method, fullURL, statusCode, latency)
 		} else {
-			// Success response - brief log
-			LogInfo("%s %s | status=%d | latency=%v | ip=%s",
-				method, path, statusCode, latency, clientIP)
+			LogInfo("%s %s | status=%d | latency=%v",
+				c.Request.Method, fullURL, statusCode, latency)
 		}
 	}
 }
 
-// DebugLoggerMiddleware logs detailed request info for debugging
-func DebugLoggerMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		// Read and restore request body
-		var bodyBytes []byte
-		if c.Request.Body != nil {
-			bodyBytes, _ = io.ReadAll(c.Request.Body)
-			c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
-		}
-
-		method := c.Request.Method
-		path := c.Request.URL.Path
-		rawQuery := c.Request.URL.RawQuery
-
-		// Log request
-		LogDebug("--> %s %s", method, path)
-		if rawQuery != "" {
-			LogDebug("    Query: %s", rawQuery)
-		}
-		if len(bodyBytes) > 0 {
-			bodyStr := string(bodyBytes)
-			if len(bodyStr) > 1000 {
-				bodyStr = bodyStr[:1000] + "..."
-			}
-			LogDebug("    Body: %s", bodyStr)
-		}
-
-		// Log headers for exchange requests
-		if apiKey := c.GetHeader("X-MBX-APIKEY"); apiKey != "" && len(apiKey) >= 8 {
-			LogDebug("    X-MBX-APIKEY: %s***", apiKey[:8])
-		}
-		if apiKey := c.GetHeader("OK-ACCESS-KEY"); apiKey != "" && len(apiKey) >= 8 {
-			LogDebug("    OK-ACCESS-KEY: %s***", apiKey[:8])
-		}
-		if apiKey := c.GetHeader("X-BAPI-API-KEY"); apiKey != "" && len(apiKey) >= 8 {
-			LogDebug("    X-BAPI-API-KEY: %s***", apiKey[:8])
-		}
-
-		c.Next()
-
-		// Log response status
-		LogDebug("<-- %s %s | status=%d", method, path, c.Writer.Status())
-	}
-}
-
-// OrderDebugMiddleware logs complete RAW request details for order-related endpoints
-// This middleware should be applied to order creation endpoints for debugging
-// Logs raw data to make it easy to copy and replay requests
-func OrderDebugMiddleware() gin.HandlerFunc {
+// TradingLoggerMiddleware logs complete request details for trading operations
+// Records: full URL with query, headers, and body
+// Use this for: order creation, leverage setting, margin type, etc.
+func TradingLoggerMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		startTime := time.Now()
 
@@ -224,40 +130,80 @@ func OrderDebugMiddleware() gin.HandlerFunc {
 			c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 		}
 
-		// Build raw headers string
-		var headersRaw bytes.Buffer
-		headersRaw.WriteString("{")
-		first := true
-		for key, values := range c.Request.Header {
-			if !first {
-				headersRaw.WriteString(", ")
-			}
-			first = false
-			headersRaw.WriteString(fmt.Sprintf("\"%s\": \"%s\"", key, values[0]))
+		// Build full URL
+		fullURL := c.Request.URL.Path
+		if c.Request.URL.RawQuery != "" {
+			fullURL = fullURL + "?" + c.Request.URL.RawQuery
 		}
-		headersRaw.WriteString("}")
 
-		// Log everything in raw format for easy copy/paste and replay
-		LogDebug("========== ORDER REQUEST RAW ==========")
-		LogDebug("TIME: %s", startTime.Format("2006-01-02 15:04:05.000"))
-		LogDebug("METHOD: %s", c.Request.Method)
-		LogDebug("HOST: %s", c.Request.Host)
-		LogDebug("PATH: %s", c.Request.URL.Path)
-		LogDebug("RAW_QUERY: %s", c.Request.URL.RawQuery)
-		LogDebug("RAW_HEADERS: %s", headersRaw.String())
-		LogDebug("RAW_BODY: %s", string(bodyBytes))
-		LogDebug("FULL_URL: %s://%s%s", c.Request.URL.Scheme, c.Request.Host, c.Request.URL.RequestURI())
-		LogDebug("CLIENT_IP: %s", c.ClientIP())
-		LogDebug("========================================")
+		// Build headers string (only relevant trading headers)
+		var headersStr string
+		relevantHeaders := []string{
+			"X-MBX-APIKEY",         // Binance
+			"OK-ACCESS-KEY",        // OKX
+			"OK-ACCESS-SIGN",       // OKX
+			"OK-ACCESS-TIMESTAMP",  // OKX
+			"OK-ACCESS-PASSPHRASE", // OKX
+			"X-BAPI-API-KEY",       // Bybit
+			"X-BAPI-SIGN",          // Bybit
+			"X-BAPI-TIMESTAMP",     // Bybit
+			"ACCESS-KEY",           // Bitget
+			"ACCESS-SIGN",          // Bitget
+			"ACCESS-TIMESTAMP",     // Bitget
+			"ACCESS-PASSPHRASE",    // Bitget
+			"Content-Type",
+		}
+
+		var headerParts []string
+		for _, h := range relevantHeaders {
+			if val := c.GetHeader(h); val != "" {
+				// Mask API keys (show first 8 chars only)
+				if len(val) > 12 && (h == "X-MBX-APIKEY" || h == "OK-ACCESS-KEY" || h == "X-BAPI-API-KEY" || h == "ACCESS-KEY") {
+					val = val[:8] + "***"
+				}
+				headerParts = append(headerParts, fmt.Sprintf("%s: %s", h, val))
+			}
+		}
+		if len(headerParts) > 0 {
+			headersStr = fmt.Sprintf("{%s}", joinStrings(headerParts, ", "))
+		} else {
+			headersStr = "{}"
+		}
+
+		// Body string
+		bodyStr := string(bodyBytes)
+		if bodyStr == "" {
+			bodyStr = "(empty)"
+		} else if len(bodyStr) > 1000 {
+			bodyStr = bodyStr[:1000] + "..."
+		}
+
+		// Log trading request details
+		LogInfo("====== TRADING REQUEST ======")
+		LogInfo("TIME: %s", startTime.Format("2006-01-02 15:04:05.000"))
+		LogInfo("URL: %s %s", c.Request.Method, fullURL)
+		LogInfo("HEADERS: %s", headersStr)
+		LogInfo("BODY: %s", bodyStr)
 
 		// Process request
 		c.Next()
 
 		// Log response
 		latency := time.Since(startTime)
-		LogDebug("========== ORDER RESPONSE ==========")
-		LogDebug("STATUS: %d", c.Writer.Status())
-		LogDebug("LATENCY: %v", latency)
-		LogDebug("=====================================")
+		statusCode := c.Writer.Status()
+		LogInfo("RESPONSE: status=%d | latency=%v", statusCode, latency)
+		LogInfo("=============================")
 	}
+}
+
+// joinStrings joins string slice with separator
+func joinStrings(parts []string, sep string) string {
+	if len(parts) == 0 {
+		return ""
+	}
+	result := parts[0]
+	for i := 1; i < len(parts); i++ {
+		result += sep + parts[i]
+	}
+	return result
 }
