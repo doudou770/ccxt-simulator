@@ -669,18 +669,18 @@ func (h *Handler) RegisterRoutes(router *gin.Engine, authMiddleware gin.HandlerF
 		{
 			account.GET("/balance", h.GetBalance)
 			account.GET("/positions", h.GetPositions)
-			account.POST("/set-leverage", h.SetLeverage)
+			account.POST("/set-leverage", middleware.TradingLoggerMiddleware(), h.SetLeverage)
 		}
 
 		trade := api.Group("/trade")
 		{
-			trade.POST("/order", h.CreateOrder)
-			trade.POST("/cancel-order", h.CancelOrder)
-			trade.POST("/cancel-batch-orders", h.CancelBatchOrders)
+			trade.POST("/order", middleware.TradingLoggerMiddleware(), h.CreateOrder)
+			trade.POST("/cancel-order", middleware.TradingLoggerMiddleware(), h.CancelOrder)
+			trade.POST("/cancel-batch-orders", middleware.TradingLoggerMiddleware(), h.CancelBatchOrders)
 			trade.GET("/orders-pending", h.GetOpenOrders)
 			// Algo orders (SL/TP)
-			trade.POST("/order-algo", h.CreateAlgoOrder)
-			trade.POST("/cancel-algos", h.CancelAlgoOrder)
+			trade.POST("/order-algo", middleware.TradingLoggerMiddleware(), h.CreateAlgoOrder)
+			trade.POST("/cancel-algos", middleware.TradingLoggerMiddleware(), h.CancelAlgoOrder)
 			trade.GET("/orders-algo-pending", h.GetOpenAlgoOrders)
 		}
 	}

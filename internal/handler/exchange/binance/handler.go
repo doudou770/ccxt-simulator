@@ -768,19 +768,19 @@ func (h *Handler) RegisterRoutes(router *gin.Engine, authMiddleware gin.HandlerF
 		// V1 endpoints
 		v1 := fapi.Group("/v1")
 		{
-			// Order endpoints with debug logging
-			v1.POST("/order", middleware.OrderDebugMiddleware(), h.CreateOrder)
-			v1.DELETE("/order", h.CancelOrder)
+			// Order endpoints with trading logging
+			v1.POST("/order", middleware.TradingLoggerMiddleware(), h.CreateOrder)
+			v1.DELETE("/order", middleware.TradingLoggerMiddleware(), h.CancelOrder)
 			v1.GET("/order", h.GetQueryOrder)
 			v1.GET("/openOrders", h.GetOpenOrders)
-			v1.DELETE("/allOpenOrders", h.CancelAllOpenOrders)
-			v1.POST("/leverage", h.SetLeverage)
-			v1.POST("/marginType", h.SetMarginType)
-			// Algo orders (SL/TP) with debug logging
-			v1.POST("/algoOrder", middleware.OrderDebugMiddleware(), h.CreateAlgoOrder)
-			v1.DELETE("/algoOrder", h.CancelAlgoOrder)
+			v1.DELETE("/allOpenOrders", middleware.TradingLoggerMiddleware(), h.CancelAllOpenOrders)
+			v1.POST("/leverage", middleware.TradingLoggerMiddleware(), h.SetLeverage)
+			v1.POST("/marginType", middleware.TradingLoggerMiddleware(), h.SetMarginType)
+			// Algo orders (SL/TP) with trading logging
+			v1.POST("/algoOrder", middleware.TradingLoggerMiddleware(), h.CreateAlgoOrder)
+			v1.DELETE("/algoOrder", middleware.TradingLoggerMiddleware(), h.CancelAlgoOrder)
 			v1.GET("/openAlgoOrders", h.GetOpenAlgoOrders)
-			v1.DELETE("/allOpenAlgoOrders", h.CancelAllOpenAlgoOrders)
+			v1.DELETE("/allOpenAlgoOrders", middleware.TradingLoggerMiddleware(), h.CancelAllOpenAlgoOrders)
 		}
 
 		// V2 endpoints

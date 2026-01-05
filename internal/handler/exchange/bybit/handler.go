@@ -560,15 +560,15 @@ func (h *Handler) RegisterRoutes(router *gin.Engine, authMiddleware gin.HandlerF
 		position := v5.Group("/position")
 		{
 			position.GET("/list", h.GetPositionInfo)
-			position.POST("/set-leverage", h.SetLeverage)
-			position.POST("/trading-stop", h.SetTradingStop)
+			position.POST("/set-leverage", middleware.TradingLoggerMiddleware(), h.SetLeverage)
+			position.POST("/trading-stop", middleware.TradingLoggerMiddleware(), h.SetTradingStop)
 		}
 
 		order := v5.Group("/order")
 		{
-			order.POST("/create", h.CreateOrder)
-			order.POST("/cancel", h.CancelOrder)
-			order.POST("/cancel-all", h.CancelAllOrders)
+			order.POST("/create", middleware.TradingLoggerMiddleware(), h.CreateOrder)
+			order.POST("/cancel", middleware.TradingLoggerMiddleware(), h.CancelOrder)
+			order.POST("/cancel-all", middleware.TradingLoggerMiddleware(), h.CancelAllOrders)
 			order.GET("/realtime", h.GetOpenOrders)
 		}
 	}

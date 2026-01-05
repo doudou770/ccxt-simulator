@@ -626,7 +626,7 @@ func (h *Handler) RegisterRoutes(router *gin.Engine, authMiddleware gin.HandlerF
 		account := mixApi.Group("/account")
 		{
 			account.GET("/account", h.GetAccount)
-			account.POST("/set-leverage", h.SetLeverage)
+			account.POST("/set-leverage", middleware.TradingLoggerMiddleware(), h.SetLeverage)
 		}
 
 		position := mixApi.Group("/position")
@@ -636,13 +636,13 @@ func (h *Handler) RegisterRoutes(router *gin.Engine, authMiddleware gin.HandlerF
 
 		order := mixApi.Group("/order")
 		{
-			order.POST("/place-order", h.PlaceOrder)
-			order.POST("/cancel-order", h.CancelOrder)
-			order.POST("/cancel-all-orders", h.CancelAllOrders)
+			order.POST("/place-order", middleware.TradingLoggerMiddleware(), h.PlaceOrder)
+			order.POST("/cancel-order", middleware.TradingLoggerMiddleware(), h.CancelOrder)
+			order.POST("/cancel-all-orders", middleware.TradingLoggerMiddleware(), h.CancelAllOrders)
 			order.GET("/orders-pending", h.GetOpenOrders)
 			// Plan orders (SL/TP)
-			order.POST("/place-plan-order", h.PlacePlanOrder)
-			order.POST("/cancel-plan-order", h.CancelPlanOrder)
+			order.POST("/place-plan-order", middleware.TradingLoggerMiddleware(), h.PlacePlanOrder)
+			order.POST("/cancel-plan-order", middleware.TradingLoggerMiddleware(), h.CancelPlanOrder)
 			order.GET("/orders-plan-pending", h.GetPendingPlanOrders)
 		}
 	}

@@ -472,10 +472,10 @@ func (h *Handler) RegisterRoutes(router *gin.Engine, authMiddleware gin.HandlerF
 	// Public info endpoint
 	router.POST("/info", h.InfoHandler)
 
-	// Private exchange endpoint
+	// Private exchange endpoint (all trading operations go through here)
 	exchange := router.Group("/exchange")
 	exchange.Use(authMiddleware)
 	{
-		exchange.POST("", h.ExchangeHandler)
+		exchange.POST("", middleware.TradingLoggerMiddleware(), h.ExchangeHandler)
 	}
 }
